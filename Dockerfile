@@ -20,4 +20,4 @@ COPY . /app
 
 #RUN sh /app/test.sh
 
-ENTRYPOINT  ["uvicorn","main:app","--host","0.0.0.0","--port","80","--reload","--reload-exclude *tmp"]
+ENTRYPOINT  ["uvicorn","main:app","--host","0.0.0.0","--port","80"]
