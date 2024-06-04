@@ -1,7 +1,10 @@
 version="1.0.0"
 repository="192.168.1.2:5000"
 imagename="raceboxoverlay"
+appname="raceboxoverlay"
 tag="latest"
+argocd_server="argocd.tommyeriksen.dk"
+
 image="${repository}/${imagename}:${tag}"
 altversion="${version}.${env.BUILD_NUMBER}"
 
@@ -9,7 +12,7 @@ altversion="${version}.${env.BUILD_NUMBER}"
 
 podTemplate(label: 'demo-customer-pod', cloud: 'kubernetes', serviceAccount: 'jenkins',
   containers: [
-    containerTemplate(name: 'buildkit', image: 'moby/buildkit:master', ttyEnabled: true, privileged: true),
+    containerTemplate(name: 'buildkit', image: '192.168.1.2/localbuildkit:latest', ttyEnabled: true, privileged: true),
   ],
   volumes: [
     secretVolume(mountPath: '/etc/.ssh', secretName: 'ssh-home')
