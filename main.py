@@ -7,7 +7,7 @@ import tempfile
 import time
 
 from fastapi import FastAPI, File, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 from commons import dashGenerator, setup_logging
 
@@ -54,15 +54,12 @@ async def create_upload_file(file: UploadFile):
     output = dashGenerator(
         rows=uploaddata, header=uploadHeader, width=1920, filename=file.filename
     )
-    for function in output.generate_images, output.generate_movie:
-        t1 = time.perf_counter(), time.process_time()
-        await function()
-        t2 = time.perf_counter(), time.process_time()
-        logger.info(f"{function.__name__}()")
-        logger.info(f" Real time: {t2[0] - t1[0]:.2f} seconds")
-        logger.info(f" CPU time: {t2[1] - t1[1]:.2f} seconds")
+    await output.generate_images()
+    outputfile_path = await output.generate_movie()
 
-    return {"filename": file.filename, "size": file.size, "output": output}
+    return FileResponse(
+        path=outputfile_path, filename=outputfile_path, media_type="text/mp4"
+    )
 
 
 @app.get("/")

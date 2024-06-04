@@ -236,7 +236,7 @@ class dashGenerator:
         pass1 = (
             ffmpeg.input(self.foldername + "*.png", pattern_type="glob", framerate=25)
             .output(
-                self.filename + ".mov",
+                "/data/" + self.filename + ".mov",
                 vcodec="prores_ks",
                 pix_fmt="yuva444p10le",
                 qscale=4,
@@ -246,6 +246,7 @@ class dashGenerator:
         )
         self.log.append(pass1)
         shutil.rmtree(self.foldername)
+        return "/data/" + self.filename + ".mov"
 
     def generate_textbox(
         self,
