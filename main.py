@@ -66,10 +66,12 @@ async def create_upload_file(file: UploadFile):
 async def root(request: Request):
     content = """
 <body>
+Racebox CSV file:
 <form action="/uploadfiles/" enctype="multipart/form-data" method="post">
 <input name="file" type="file">
 <input type="submit">
 </form>
+
 </body>
     """
     return HTMLResponse(content=content)

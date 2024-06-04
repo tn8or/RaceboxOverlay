@@ -6,6 +6,7 @@ image="${repository}/${imagename}:${tag}"
 altversion="${version}.${env.BUILD_NUMBER}"
 
 
+
 podTemplate(label: 'demo-customer-pod', cloud: 'kubernetes', serviceAccount: 'jenkins',
   containers: [
     containerTemplate(name: 'buildkit', image: 'moby/buildkit:master', ttyEnabled: true, privileged: true),
