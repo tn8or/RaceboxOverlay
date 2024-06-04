@@ -18,6 +18,4 @@ RUN . /opt/venv/bin/activate && pip install --no-cache-dir --upgrade -r ./requir
 
 COPY . /app
 
-#RUN sh /app/test.sh
-
-ENTRYPOINT  ["uvicorn","main:app","--host","0.0.0.0","--port","80"]
+ENTRYPOINT  ["sh", "/app/launch.sh"]
