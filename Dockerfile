@@ -1,4 +1,4 @@
-FROM python:bullseye as build
+FROM python:bookworm as build
 
 WORKDIR /app
 VOLUME [ "/data" ]
