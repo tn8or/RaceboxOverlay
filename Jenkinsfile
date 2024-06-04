@@ -1,5 +1,5 @@
 version="1.0.0"
-repository="192.168.1.2:5000"
+repository="192.168.1.2:5001"
 imagename="raceboxoverlay"
 appname="raceboxoverlay"
 tag="latest"
