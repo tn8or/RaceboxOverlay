@@ -1,7 +1,6 @@
 FROM python:bookworm as build
 
 WORKDIR /app
-VOLUME [ "/data" ]
 ARG TARGETPLATFORM
 RUN echo "I'm building for $TARGETPLATFORM"
 ENV VIRTUAL_ENV=/opt/venv

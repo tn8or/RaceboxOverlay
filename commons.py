@@ -6,6 +6,7 @@ import os
 import queue
 import shutil
 import sys
+import tempfile
 import threading
 from collections import deque
 from datetime import datetime, timedelta
@@ -35,6 +36,10 @@ logger = setup_logging()
 
 class dashGenerator:
     def __init__(self, rows, header, width, filename):
+
+        self.tmpdir = tempfile.TemporaryDirectory()
+        logger.info("Will work in %s", self.tmpdir.name)
+
         # initialize global vars
         self.maxspeed = float(0)
         self.maxleanleft = float(0)
@@ -49,7 +54,7 @@ class dashGenerator:
         self.rows = rows
         self.header = header
         self.foldername = (
-            "/data/"
+            self.tmpdir.name
             + hashlib.md5(json.dumps(rows, sort_keys=True).encode("utf-8")).hexdigest()
             + "/"
         )
@@ -236,7 +241,7 @@ class dashGenerator:
         pass1 = (
             ffmpeg.input(self.foldername + "*.png", pattern_type="glob", framerate=25)
             .output(
-                "/data/" + self.filename + ".mov",
+                self.filename + ".mov",
                 vcodec="prores_ks",
                 pix_fmt="yuva444p10le",
                 qscale=4,
@@ -245,8 +250,8 @@ class dashGenerator:
             .run()
         )
         self.log.append(pass1)
-        shutil.rmtree(self.foldername)
-        return "/data/" + self.filename + ".mov"
+        self.tmpdir.cleanup()
+        return self.filename + ".mov"
 
     def generate_textbox(
         self,
