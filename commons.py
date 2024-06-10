@@ -223,7 +223,7 @@ class dashGenerator:
 
     async def generate_images(self):
         with Pool(processes=cpu_count() * 2) as pool:
-            pool.map(self.thread_worker, self.rows, 1)
+            pool.map(self.thread_worker, self.rows, 100)
 
         logger.info("All images built")
 
@@ -324,7 +324,6 @@ class dashGenerator:
         )
 
         if int(row["Lap"]) > 0:
-
             drawimage = self.draw_position(row, trackimage)
 
             img.paste(
