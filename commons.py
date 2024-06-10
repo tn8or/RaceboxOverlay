@@ -3,13 +3,12 @@ import hashlib
 import json
 import logging
 import os
-import queue
-import shutil
 import sys
 import tempfile
 import threading
 from collections import deque
 from datetime import datetime, timedelta
+from multiprocessing import Pool, Process, Queue, cpu_count
 
 import ffmpeg
 from PIL import Image, ImageDraw, ImageFont
@@ -219,60 +218,26 @@ class dashGenerator:
 
         return img
 
-    def thread_worker(self, q):
-        while True:
-            row = q.get()
-            self.generate_image(row=row)
-            q.task_done()
+    def thread_worker(self, row):
+        self.generate_image(row)
 
     async def generate_images(self):
-        q = queue.Queue()
+        q = Queue()
         # iterate through rows again, generate one image per row
 
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        with Pool(processes=cpu_count()) as pool:
+            pool.map(self.thread_worker, self.rows, 1)
 
-        logger.info("all threads started")
-        self.log.append("all threads started")
+        #        processcount = 0
+        #        while processcount < cpu_count():
+        #            logger.info("starting %s of %s processes", processcount + 1, cpu_count())
+        #            Process(target=self.thread_worker, args=[q], daemon=True).start()
+        #            processcount = processcount + 1
 
-        for row in self.rows:
-            q.put(row)
+        #        logger.info("all threads started")
+        #        self.log.append("all threads started")
 
-        logger.info("all rows added to queue")
-        self.log.append("all rows added to queue")
-
-        q.join()
+        # q.join()
         logger.info("All images built")
 
     async def generate_movie(self):

@@ -5,6 +5,7 @@ import io
 import os
 import sys
 import tempfile
+from multiprocessing import freeze_support
 
 from commons import dashGenerator, setup_logging
 
@@ -47,4 +48,6 @@ async def parse_file(filename):
     return ("output file: %s", outputfile_path)
 
 
-asyncio.run(parse_file(sys.argv[1]))
+if __name__ == "__main__":
+    freeze_support()
+    asyncio.run(parse_file(sys.argv[1]))
