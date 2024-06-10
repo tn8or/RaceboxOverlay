@@ -268,8 +268,8 @@ class dashGenerator:
         length = draw.textlength(text, font=font)
         draw.rounded_rectangle(
             xy=(
-                (x, y + self.fontsize * 0.15),
-                (x + length, y + self.fontsize + self.fontsize * 0.15),
+                (x, y + self.fontsize * 0.2),
+                (x + length, y + self.fontsize + self.fontsize * 0.2),
             ),
             radius=5,
             fill=(50, 50, 50, 50),
