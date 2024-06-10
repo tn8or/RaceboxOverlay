@@ -222,7 +222,7 @@ class dashGenerator:
         self.generate_image(row)
 
     async def generate_images(self):
-        with Pool(processes=cpu_count() * 2) as pool:
+        with Pool(processes=cpu_count()) as pool:
             pool.map(self.thread_worker, self.rows, 500)
 
         logger.info("All images built")
