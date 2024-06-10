@@ -300,13 +300,15 @@ class dashGenerator:
         date = row["Time"].split("T")
         time = date[1].split(".")
 
+        gforce = int(row["GForceX"])
+
         filename = self.foldername + "frame" + frame.rjust(8, "0") + ".png"
 
         img = Image.new("RGBA", (self.width, self.height), (0, 0, 0, 0))
 
         draw = ImageDraw.Draw(img)
 
-        # left top"
+        # left top
         self.generate_textbox(
             draw=draw,
             x=self.width * 0.08,
@@ -325,12 +327,33 @@ class dashGenerator:
 
         # screen bottom
         self.generate_textbox(
-            draw=draw, x=self.width * 0.2, y=self.height * 0.9, text=lap, align="left"
+            draw=draw,
+            x=self.width * 0.08,
+            y=self.height * 0.10 + self.fontsize * 1.30,
+            text=lap,
         )
+
+        if float(gforce) > 0:
+            self.generate_textbox(
+                draw=draw,
+                x=self.width * 0.4,
+                y=self.height * 0.9,
+                text=gforce + " G",
+                color=(20, 255, 20, 200),
+            )
+        else:
+            gforce = -float(gforce)
+            self.generate_textbox(
+                draw=draw,
+                x=self.width * 0.4,
+                y=self.height * 0.9,
+                text=gforce + " G",
+                color=(255, 20, 20, 200),
+            )
 
         self.generate_textbox(
             draw=draw,
-            x=self.width * 0.4,
+            x=self.width * 0.45,
             y=self.height * 0.9,
             text=speed,
         )
