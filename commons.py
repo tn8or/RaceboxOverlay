@@ -65,13 +65,13 @@ class dashGenerator:
             self.height = 1080
             self.width = width
             self.maxtracksize = 500
-            self.polygonwidth = 10
+            self.polygonwidth = 8
         if width == "uhd":
             self.fontsize = 100
             self.width = width
             self.height = 2160
             self.maxtracksize = 1000
-            self.polygonwidth = 20
+            self.polygonwidth = 16
 
         if not os.path.exists(self.foldername):
             os.mkdir(self.foldername)
@@ -125,8 +125,8 @@ class dashGenerator:
             self.trackheight = 500
             self.trackwidth = int(500 * self.lat / self.lon)
 
-        self.latscaling = int(self.trackwidth * 0.95) / self.lat
-        self.lonscaling = int(self.trackheight * 0.95) / self.lon
+        self.latscaling = int(self.trackwidth * 0.90) / self.lat
+        self.lonscaling = int(self.trackheight * 0.90) / self.lon
 
         logging.info("latscaling: %s ", self.latscaling)
         logging.info("lonscaling: %s ", self.lonscaling)
