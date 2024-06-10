@@ -300,7 +300,7 @@ class dashGenerator:
         date = row["Time"].split("T")
         time = date[1].split(".")
 
-        gforce = int(row["GForceX"])
+        gforce = row["GForceX"]
 
         filename = self.foldername + "frame" + frame.rjust(8, "0") + ".png"
 
@@ -338,7 +338,7 @@ class dashGenerator:
                 draw=draw,
                 x=self.width * 0.4,
                 y=self.height * 0.9,
-                text=gforce + " G",
+                text=str(gforce) + " G",
                 color=(20, 255, 20, 200),
             )
         else:
@@ -347,7 +347,7 @@ class dashGenerator:
                 draw=draw,
                 x=self.width * 0.4,
                 y=self.height * 0.9,
-                text=gforce + " G",
+                text=str(gforce) + " G",
                 color=(255, 20, 20, 200),
             )
 
