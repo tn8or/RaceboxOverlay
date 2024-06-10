@@ -205,6 +205,7 @@ class dashGenerator:
         coords = self.calcCoordinates(row)
         img = canvas
         draw = ImageDraw.Draw(img)
+        logger.info("Drawing coords at %s", coords)
         draw.rectangle(coords, fill=(0, 0, 0), outline=None, width=5)
 
         return img
