@@ -10,6 +10,7 @@ import tempfile
 import threading
 from collections import deque
 from datetime import datetime, timedelta
+from multiprocessing import cpu_count
 
 import ffmpeg
 from PIL import Image, ImageDraw, ImageFont
@@ -223,41 +224,11 @@ class dashGenerator:
 
     async def generate_images(self):
         q = queue.Queue()
-        # iterate through rows again, generate one image per row
 
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
-        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        processcount = 0
+        while processcount < cpu_count():
+            logger.info("starting worker %s of %s", processcount + 1, cpu_count())
+            threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
 
         logger.info("all threads started")
         self.log.append("all threads started")
