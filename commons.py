@@ -52,11 +52,6 @@ class dashGenerator:
         self.filename = filename
         self.rows = rows
         self.header = header
-        self.foldername = (
-            self.tmpdir.name
-            + hashlib.md5(json.dumps(rows, sort_keys=True).encode("utf-8")).hexdigest()
-            + "/"
-        )
         self.log = []
 
         if width == 1920:
