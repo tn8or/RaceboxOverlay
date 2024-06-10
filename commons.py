@@ -272,7 +272,7 @@ class dashGenerator:
                 (x + length, y + self.fontsize + self.fontsize * 0.2),
             ),
             radius=5,
-            fill=(50, 50, 50, 50),
+            fill=(50, 50, 50, 80),
             outline=None,
         )
         draw.text(draw_point, text, font=font, fill=color, align=align)
