@@ -201,6 +201,14 @@ class dashGenerator:
         draw.line(polygon, width=self.polygonwidth, fill=(0, 0, 0), joint="curve")
         return trackimage
 
+    def draw_position(self, row, canvas):
+        coords = self.calcCoordinates(row)
+        img = canvas
+        draw = ImageDraw.Draw(img)
+        draw.rectangle(coords, fill=(0, 0, 0), outline=None, width=5)
+
+        return img
+
     def thread_worker(self, q):
         while True:
             row = q.get()
@@ -343,8 +351,10 @@ class dashGenerator:
             draw=draw, x=self.width * 0.8, y=self.height * 0.9, text=lean
         )
 
+        drawimage = self.draw_position(row, trackimage)
+
         img.paste(
-            trackimage,
+            drawimage,
             (self.width - int(self.trackwidth) - int(self.trackwidth * 0.1), 50),
         )
 
