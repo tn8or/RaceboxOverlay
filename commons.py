@@ -3,12 +3,13 @@ import hashlib
 import json
 import logging
 import os
+import queue
+import shutil
 import sys
 import tempfile
 import threading
 from collections import deque
 from datetime import datetime, timedelta
-from multiprocessing import Pool, Process, Queue, cpu_count
 
 import ffmpeg
 from PIL import Image, ImageDraw, ImageFont
@@ -52,6 +53,11 @@ class dashGenerator:
         self.filename = filename
         self.rows = rows
         self.header = header
+        self.foldername = (
+            self.tmpdir.name
+            + hashlib.md5(json.dumps(rows, sort_keys=True).encode("utf-8")).hexdigest()
+            + "/"
+        )
         self.log = []
 
         if width == 1920:
@@ -213,13 +219,60 @@ class dashGenerator:
 
         return img
 
-    def thread_worker(self, row):
-        self.generate_image(row)
+    def thread_worker(self, q):
+        while True:
+            row = q.get()
+            self.generate_image(row=row)
+            q.task_done()
 
     async def generate_images(self):
-        with Pool(processes=cpu_count()) as pool:
-            pool.map(self.thread_worker, self.rows, 500)
+        q = queue.Queue()
+        # iterate through rows again, generate one image per row
 
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+        threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+
+        logger.info("all threads started")
+        self.log.append("all threads started")
+
+        for row in self.rows:
+            q.put(row)
+
+        logger.info("all rows added to queue")
+        self.log.append("all rows added to queue")
+
+        q.join()
         logger.info("All images built")
 
     async def generate_movie(self):
@@ -319,6 +372,7 @@ class dashGenerator:
         )
 
         if int(row["Lap"]) > 0:
+
             drawimage = self.draw_position(row, trackimage)
 
             img.paste(
