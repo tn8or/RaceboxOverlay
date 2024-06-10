@@ -66,12 +66,14 @@ class dashGenerator:
             self.width = width
             self.maxtracksize = 500
             self.polygonwidth = 8
+            self.polygonmargin = 10
         if width == "uhd":
             self.fontsize = 100
             self.width = width
             self.height = 2160
             self.maxtracksize = 1000
             self.polygonwidth = 16
+            self.polygonmargin = 20
 
         if not os.path.exists(self.foldername):
             os.mkdir(self.foldername)
@@ -125,8 +127,8 @@ class dashGenerator:
             self.trackheight = 500
             self.trackwidth = int(500 * self.lat / self.lon)
 
-        self.latscaling = int(self.trackwidth * 0.90) / self.lat
-        self.lonscaling = int(self.trackheight * 0.90) / self.lon
+        self.latscaling = int(self.trackwidth - self.polygonmargin * 2) / self.lat
+        self.lonscaling = int(self.trackheight - self.polygonmargin * 2) / self.lon
 
         logging.info("latscaling: %s ", self.latscaling)
         logging.info("lonscaling: %s ", self.lonscaling)
@@ -148,8 +150,14 @@ class dashGenerator:
 
         # logger.info("lat and lon float %s %s", lat, lon)
 
-        lat = int((lat - self.correctedminlat) * self.latscaling / 10000000)
-        lon = int((lon - self.correctedminlon) * self.lonscaling / 10000000)
+        lat = int(
+            (lat - self.correctedminlat) * self.latscaling / 10000000
+            + self.polygonmargin
+        )
+        lon = int(
+            (lon - self.correctedminlon) * self.lonscaling / 10000000
+            + self.polygonmargin
+        )
 
         # logger.info("lat and lon corrected %s %s", lat, lon)
         # polygon.append((int(lat), int(lon)))
