@@ -222,22 +222,9 @@ class dashGenerator:
         self.generate_image(row)
 
     async def generate_images(self):
-        q = Queue()
-        # iterate through rows again, generate one image per row
-
-        with Pool(processes=cpu_count()) as pool:
+        with Pool(processes=cpu_count() * 2) as pool:
             pool.map(self.thread_worker, self.rows, 1)
 
-        #        processcount = 0
-        #        while processcount < cpu_count():
-        #            logger.info("starting %s of %s processes", processcount + 1, cpu_count())
-        #            Process(target=self.thread_worker, args=[q], daemon=True).start()
-        #            processcount = processcount + 1
-
-        #        logger.info("all threads started")
-        #        self.log.append("all threads started")
-
-        # q.join()
         logger.info("All images built")
 
     async def generate_movie(self):
