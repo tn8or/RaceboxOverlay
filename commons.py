@@ -325,14 +325,14 @@ class dashGenerator:
             align="left",
         )
 
-        # screen bottom
-        self.generate_textbox(
-            draw=draw,
-            x=self.width * 0.08,
-            y=self.height * 0.10 + (self.fontsize * 1.15) * 2,
-            text=lap,
-            align="left",
-        )
+        if int(row["Lap"]) > 0:
+            self.generate_textbox(
+                draw=draw,
+                x=self.width * 0.08,
+                y=self.height * 0.10 + self.fontsize * 2 + self.fontsize * 0.15,
+                text=lap,
+                align="left",
+            )
 
         if float(gforce) > 0:
             self.generate_textbox(
