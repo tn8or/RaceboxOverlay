@@ -229,6 +229,7 @@ class dashGenerator:
         while processcount < cpu_count():
             logger.info("starting worker %s of %s", processcount + 1, cpu_count())
             threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
+            processcount = processcount + 1
 
         logger.info("all threads started")
         self.log.append("all threads started")
