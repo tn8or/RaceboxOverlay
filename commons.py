@@ -213,8 +213,9 @@ class dashGenerator:
         )
         img = canvas
         draw = ImageDraw.Draw(img)
-        logger.info("Drawing coords at %s", coords)
-        draw.rounded_rectangle(coords, fill=(0, 0, 0), outline=None, width=5, corners=2)
+        draw.rounded_rectangle(
+            coords, fill=(255, 0, 0), outline=None, width=5, radius=2
+        )
 
         return img
 
