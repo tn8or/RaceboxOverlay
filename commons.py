@@ -184,10 +184,10 @@ class dashGenerator:
         )
 
         draw = ImageDraw.Draw(trackimage)
-        draw.chord(
+        draw.line(
             polygon, width=int(self.polygonwidth * 2), outline=(255, 255, 255, 75)
         )
-        draw.chord(polygon, width=self.polygonwidth, outline=(0, 0, 0))
+        draw.line(polygon, width=self.polygonwidth, outline=(0, 0, 0))
         return trackimage
 
     def thread_worker(self, q):
