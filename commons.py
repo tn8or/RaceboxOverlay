@@ -267,7 +267,10 @@ class dashGenerator:
         draw_point = (x, y)
         length = draw.textlength(text, font=font)
         draw.rounded_rectangle(
-            xy=((x, y), (x + length, y + self.fontsize)),
+            xy=(
+                (x, y + self.fontsize * 0.1),
+                (x + length, y + self.fontsize + self.fontsize * 0.1),
+            ),
             radius=5,
             fill=(50, 50, 50, 50),
             outline=None,
@@ -276,13 +279,14 @@ class dashGenerator:
 
     def generate_image(self, row=dict):
         frame = row["Record"]
-        speed = row["Speed"] + " km/h"
+        speed = row["Speed"]
+        speed = speed[:-3] + " km/h"
         lap = "Lap: " + row["Lap"]
         lean = float(row["LeanAngle"])
         if lean > 0:
-            lean = str(round(lean, 1))
+            lean = str(round(lean))
         else:
-            lean = str(round(-lean, 1))
+            lean = str(round(-lean))
 
         lean = lean + "°"
 
