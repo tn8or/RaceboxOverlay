@@ -67,6 +67,7 @@ class dashGenerator:
             self.maxtracksize = 500
             self.polygonwidth = 8
             self.polygonmargin = 10
+            self.positionsize = 5
         if width == "uhd":
             self.fontsize = 100
             self.width = width
@@ -74,6 +75,7 @@ class dashGenerator:
             self.maxtracksize = 1000
             self.polygonwidth = 16
             self.polygonmargin = 20
+            self.positionsize = 10
 
         if not os.path.exists(self.foldername):
             os.mkdir(self.foldername)
@@ -203,10 +205,16 @@ class dashGenerator:
 
     def draw_position(self, row, canvas):
         coords = self.calcCoordinates(row)
+        coords = (
+            coords[0],
+            coords[1],
+            coords[0] + self.positionsize,
+            coords[1] + self.positionsize,
+        )
         img = canvas
         draw = ImageDraw.Draw(img)
         logger.info("Drawing coords at %s", coords)
-        draw.rectangle(coords, fill=(0, 0, 0), outline=None, width=5)
+        draw.rounded_rectangle(coords, fill=(0, 0, 0), outline=None, width=5, corners=2)
 
         return img
 
