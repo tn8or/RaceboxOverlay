@@ -337,9 +337,9 @@ class dashGenerator:
         if float(gforce) > 0:
             self.generate_textbox(
                 draw=draw,
-                x=self.width * 0.4,
+                x=self.width * 0.15,
                 y=self.height * 0.9,
-                text=str(gforce) + " G",
+                text="G: " + str(gforce),
                 color=(20, 255, 20, 200),
             )
         else:
@@ -348,7 +348,7 @@ class dashGenerator:
                 draw=draw,
                 x=self.width * 0.15,
                 y=self.height * 0.9,
-                text=str(gforce) + " G",
+                text="G: " + str(gforce),
                 color=(255, 20, 20, 200),
             )
 
