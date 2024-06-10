@@ -184,9 +184,7 @@ class dashGenerator:
         )
 
         draw = ImageDraw.Draw(trackimage)
-        draw.polygon(
-            polygon, width=int(self.polygonwidth * 1.5), outline=(150, 150, 150, 75)
-        )
+        # draw.polygon(polygon, width=int(self.polygonwidth * 1.5), outline=(150, 150, 150, 75))
         draw.polygon(polygon, width=self.polygonwidth, outline=(0, 0, 0))
         return trackimage
 
