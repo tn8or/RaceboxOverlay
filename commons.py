@@ -211,7 +211,7 @@ class dashGenerator:
             coords[0] + self.positionsize,
             coords[1] + self.positionsize,
         )
-        img = canvas
+        img = canvas.copy()
         draw = ImageDraw.Draw(img)
         draw.rounded_rectangle(
             coords, fill=(255, 0, 0), outline=None, width=5, radius=2
@@ -361,12 +361,14 @@ class dashGenerator:
             draw=draw, x=self.width * 0.8, y=self.height * 0.9, text=lean
         )
 
-        drawimage = self.draw_position(row, trackimage)
+        if int(row["Lap"]) > 0:
 
-        img.paste(
-            drawimage,
-            (self.width - int(self.trackwidth) - int(self.trackwidth * 0.1), 50),
-        )
+            drawimage = self.draw_position(row, trackimage)
+
+            img.paste(
+                drawimage,
+                (self.width - int(self.trackwidth) - int(self.trackwidth * 0.1), 50),
+            )
 
         img.save(filename, "PNG")
         # logger.info("Saved file " + filename)
