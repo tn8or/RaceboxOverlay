@@ -339,37 +339,6 @@ class dashGenerator:
                 align="left",
             )
 
-        self.generate_textbox(
-            draw=draw,
-            x=self.width * 0.15,
-            y=self.height * 0.8,
-            text=str(gforcez),
-            color=(20, 255, 20, 200),
-        )
-
-        self.generate_textbox(
-            draw=draw,
-            x=self.width * 0.15,
-            y=self.height * 0.7,
-            text=str(gyroz),
-            color=(20, 255, 20, 200),
-        )
-
-        self.generate_textbox(
-            draw=draw,
-            x=self.width * 0.15,
-            y=self.height * 0.6,
-            text=str(gyrox),
-            color=(20, 255, 20, 200),
-        )
-
-        self.generate_textbox(
-            draw=draw,
-            x=self.width * 0.15,
-            y=self.height * 0.5,
-            text=str(gyroy),
-            color=(20, 255, 20, 200),
-        )
 
         #        if float(gforce) > 0:
         #            self.generate_textbox(
