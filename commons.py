@@ -295,6 +295,11 @@ class dashGenerator:
         else:
             lean = str(round(-lean))
 
+        gforcez = "gforcez" + str(row["GForceZ"])
+        gyrox = "gyrox" + str(row["GyroX"])
+        gyroy = "gyroy" + str(row["GyroY"])
+        gyroz = "gyroz" + str(row["GyroZ"])
+
         lean = lean + "°"
 
         date = row["Time"].split("T")
@@ -329,28 +334,60 @@ class dashGenerator:
             self.generate_textbox(
                 draw=draw,
                 x=self.width * 0.08,
-                y=self.height * 0.10 + self.fontsize * 2 + self.fontsize * 0.15,
+                y=self.height * 0.10 + self.fontsize * 2 + self.fontsize * 0.15 * 2,
                 text=lap,
                 align="left",
             )
 
-        if float(gforce) > 0:
-            self.generate_textbox(
-                draw=draw,
-                x=self.width * 0.15,
-                y=self.height * 0.9,
-                text="G: " + str(gforce),
-                color=(20, 255, 20, 200),
-            )
-        else:
-            gforce = -float(gforce)
-            self.generate_textbox(
-                draw=draw,
-                x=self.width * 0.15,
-                y=self.height * 0.9,
-                text="G: " + str(gforce),
-                color=(255, 20, 20, 200),
-            )
+        self.generate_textbox(
+            draw=draw,
+            x=self.width * 0.15,
+            y=self.height * 0.8,
+            text=str(gforcez),
+            color=(20, 255, 20, 200),
+        )
+
+        self.generate_textbox(
+            draw=draw,
+            x=self.width * 0.15,
+            y=self.height * 0.7,
+            text=str(gyroz),
+            color=(20, 255, 20, 200),
+        )
+
+        self.generate_textbox(
+            draw=draw,
+            x=self.width * 0.15,
+            y=self.height * 0.6,
+            text=str(gyrox),
+            color=(20, 255, 20, 200),
+        )
+
+        self.generate_textbox(
+            draw=draw,
+            x=self.width * 0.15,
+            y=self.height * 0.5,
+            text=str(gyroy),
+            color=(20, 255, 20, 200),
+        )
+
+        #        if float(gforce) > 0:
+        #            self.generate_textbox(
+        #                draw=draw,
+        #                x=self.width * 0.15,
+        #                y=self.height * 0.9,
+        #                text="G: " + str(gforce),
+        #                color=(20, 255, 20, 200),
+        #            )
+        #        else:
+        #            gforce = -float(gforce)
+        #            self.generate_textbox(
+        #                draw=draw,
+        #                x=self.width * 0.15,
+        #                y=self.height * 0.9,
+        #                text="G: " + str(gforce),
+        #                color=(255, 20, 20, 200),
+        #            )
 
         self.generate_textbox(
             draw=draw,
@@ -363,14 +400,12 @@ class dashGenerator:
             draw=draw, x=self.width * 0.8, y=self.height * 0.9, text=lean
         )
 
-        if int(row["Lap"]) > 0:
+        drawimage = self.draw_position(row, trackimage)
 
-            drawimage = self.draw_position(row, trackimage)
-
-            img.paste(
-                drawimage,
-                (self.width - int(self.trackwidth) - int(self.trackwidth * 0.1), 50),
-            )
+        img.paste(
+            drawimage,
+            (self.width - int(self.trackwidth) - int(self.trackwidth * 0.1), 50),
+        )
 
         img.save(filename, "PNG")
         # logger.info("Saved file " + filename)
