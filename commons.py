@@ -339,7 +339,6 @@ class dashGenerator:
                 align="left",
             )
 
-
         #        if float(gforce) > 0:
         #            self.generate_textbox(
         #                draw=draw,
@@ -360,13 +359,13 @@ class dashGenerator:
 
         self.generate_textbox(
             draw=draw,
-            x=self.width * 0.45,
-            y=self.height * 0.9,
+            x=self.width * 0.08,
+            y=self.height * 0.8,
             text=speed,
         )
 
         self.generate_textbox(
-            draw=draw, x=self.width * 0.8, y=self.height * 0.9, text=lean
+            draw=draw, x=self.width * 0.8, y=self.height * 0.8, text=lean
         )
 
         drawimage = self.draw_position(row, trackimage)
