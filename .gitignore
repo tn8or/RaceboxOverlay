@@ -5,3 +5,5 @@ files
 *pyc
 __pycache/*
 *mov
+*png
+*svg

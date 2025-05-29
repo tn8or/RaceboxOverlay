@@ -56,6 +56,9 @@ class dashGenerator:
         self.header = header
         self.foldername = self.tmpdir.name + "/"
         self.log = []
+        self.laps = []
+        self.hasShownLaps = False
+        self.prevBest = 9999999999
 
         if width == 1920:
             self.fontsize = 50
@@ -65,7 +68,7 @@ class dashGenerator:
             self.polygonwidth = 8
             self.polygonmargin = 10
             self.positionsize = 8
-        if width == "uhd":
+        elif width == 3840:
             self.fontsize = 100
             self.width = width
             self.height = 2160
@@ -73,6 +76,14 @@ class dashGenerator:
             self.polygonwidth = 16
             self.polygonmargin = 20
             self.positionsize = 16
+        else:
+            self.fontsize = 30
+            self.height = 720
+            self.width = width
+            self.maxtracksize = 300
+            self.polygonwidth = 5
+            self.polygonmargin = 8
+            self.positionsize = 5
 
         if not os.path.exists(self.foldername):
             os.mkdir(self.foldername)
@@ -101,10 +112,26 @@ class dashGenerator:
             if float(row["Longitude"]) < self.minlongitude:
                 self.minlongitude = float(row["Longitude"])
 
+
         logger.info("latitudes %s %s", self.minlatitude, self.minlongitude)
         self.genTrackPolygon()
 
+        for row in header:
+            if row.startswith("Lap "):
+                lap = row.split(",")
+                if len(lap) > 1:
+                    lap = float(lap[1].strip())
+                    if lap not in self.laps:
+                        self.laps.append(lap)
+
+        logger.info("found %s laps", len(self.laps))
+        logger.info("laps: %s", self.laps)
         logger.info("general stats gathered")
+
+    def convert_seconds(self,seconds):
+        minutes = seconds // 60
+        remaining_seconds = seconds % 60
+        return minutes, remaining_seconds
 
     def calcPolygonScaling(self):
         # whats the difference in longitude?
@@ -237,8 +264,8 @@ class dashGenerator:
         for row in self.rows:
             q.put(row)
 
-        logger.info("all rows added to queue")
-        self.log.append("all rows added to queue")
+        logger.info("all " + str(len(self.rows)) + " rows added to queue")
+        self.log.append("all " + str(len(self.rows)) + " rows added to queue")
 
         q.join()
         logger.info("All images built")
@@ -266,12 +293,12 @@ class dashGenerator:
         x,
         y,
         text,
-        font="font/OpenSans-Bold.ttf",
+        font="font/DejaVuSansCondensed-Bold.ttf",
         color=(255, 255, 255, 200),
         align="center",
     ):
         font = ImageFont.truetype(font, size=self.fontsize)
-        draw_point = (x, y)
+        draw_point = (x, y + 6)
         length = draw.textlength(text, font=font)
         draw.rounded_rectangle(
             xy=(
@@ -284,12 +311,14 @@ class dashGenerator:
         )
         draw.text(draw_point, text, font=font, fill=color, align=align)
 
+
     def generate_image(self, row=dict):
         frame = row["Record"]
         speed = row["Speed"]
         speed = speed[:-3] + " km/h"
         lap = "Lap: " + row["Lap"]
         lean = float(row["LeanAngle"])
+        orglean = int(round(lean))
         if lean > 0:
             lean = str(round(lean))
         else:
@@ -339,23 +368,37 @@ class dashGenerator:
                 align="left",
             )
 
-        #        if float(gforce) > 0:
-        #            self.generate_textbox(
-        #                draw=draw,
-        #                x=self.width * 0.15,
-        #                y=self.height * 0.9,
-        #                text="G: " + str(gforce),
-        #                color=(20, 255, 20, 200),
-        #            )
-        #        else:
-        #            gforce = -float(gforce)
-        #            self.generate_textbox(
-        #                draw=draw,
-        #                x=self.width * 0.15,
-        #                y=self.height * 0.9,
-        #                text="G: " + str(gforce),
-        #                color=(255, 20, 20, 200),
-        #            )
+        if int(row["Lap"]) > 1 or self.hasShownLaps is True:
+            lapcnt = 1
+            self.hasShownLaps = True
+            if row["Lap"] == "0":
+                # make sure we show laptimes for the in-lap
+                row["Lap"] = 999
+            for lap in self.laps:
+                if lapcnt < int(row["Lap"]):
+                    if int(row["Lap"]) > 2:
+                        if lap <= self.prevBest:
+                            self.prevBest = lap
+                            color = (30,255,30,200)
+                        else:
+                            color = (255, 255, 255, 200)
+                    else:
+                        color = (255, 255, 255, 200)
+
+                    self.generate_textbox(
+                        draw=draw,
+                        x=self.width * 0.08,
+                        y=self.height * 0.10 + self.fontsize * 2 + self.fontsize * 0.15 * 2 + self.fontsize * 0.15 * lapcnt + self.fontsize * lapcnt,
+                        # Prepare lap time formatting
+                        text="Lap " + str(lapcnt) + ": " +
+                             str(self.convert_seconds(int(str(lap).split(".")[0]))[0]) + ":" +
+                             str(self.convert_seconds(int(str(lap).split(".")[0]))[1]) + "." +
+                             str(lap).split(".")[1],
+                        align="left",
+                        color=color,
+                    )
+                lapcnt = lapcnt + 1
+
 
         self.generate_textbox(
             draw=draw,
@@ -364,17 +407,40 @@ class dashGenerator:
             text=speed,
         )
 
-        self.generate_textbox(
-            draw=draw, x=self.width * 0.8, y=self.height * 0.8, text=lean
-        )
-
         drawimage = self.draw_position(row, trackimage)
 
         img.paste(
             drawimage,
-            (self.width - int(self.trackwidth) - int(self.trackwidth * 0.1), 50),
+            (self.width - int(self.trackwidth) - int(self.trackwidth * 1), 50),
         )
 
-        img.save(filename, "PNG")
+        overlay = Image.open(f"angles/arrow_{orglean:03d}.png")
+        img.paste(
+            overlay,
+            (int(self.width * 0.8), int(self.height * 0.65)),
+            overlay,
+        )
+
+        self.generate_textbox(
+            draw=draw, x=self.width * 0.832, y=self.height * 0.74, text=lean
+        )
+
+        if float(gforce) > 0:
+            gtext = "⬇" + str(round(float(gforce), 2)) + "G"
+            gcolor = (255, 20, 20, 200)
+        else:
+            gtext = "⬆" + str(round(-float(gforce), 2)) + "G"
+            gcolor = (20, 255, 20, 200)
+
+        self.generate_textbox(
+            draw=draw,
+            x=self.width * 0.8,
+            y=self.height * 0.8,
+            text=gtext,
+            color=gcolor,
+            align="right",
+        )
+
+        img.save(filename, "PNG",compress_level=1)
         # logger.info("Saved file " + filename)
         self.log.append("Saved file " + filename)
