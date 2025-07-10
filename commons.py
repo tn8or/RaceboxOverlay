@@ -38,7 +38,7 @@ logger = setup_logging()
 class dashGenerator:
     def __init__(self, rows, header, width, filename):
 
-        self.tmpdir = tempfile.TemporaryDirectory()
+        self.tmpdir = tempfile.TemporaryDirectory(dir="/tmp")
         logger.info("Will work in %s", self.tmpdir.name)
 
         # initialize global vars
@@ -59,6 +59,7 @@ class dashGenerator:
         self.laps = []
         self.hasShownLaps = False
         self.prevBest = 9999999999
+        self.trackimage = None
 
         if width == 1920:
             self.fontsize = 50
@@ -84,6 +85,15 @@ class dashGenerator:
             self.polygonwidth = 5
             self.polygonmargin = 8
             self.positionsize = 5
+
+        # Add this block to set self.font
+        try:
+            self.font = ImageFont.truetype(
+                "font/DejaVuSansCondensed-Bold.ttf", size=self.fontsize
+            )
+        except Exception as e:
+            logger.warning("Could not load font, using default: %s", e)
+            self.font = ImageFont.load_default()
 
         if not os.path.exists(self.foldername):
             os.mkdir(self.foldername)
@@ -112,7 +122,6 @@ class dashGenerator:
             if float(row["Longitude"]) < self.minlongitude:
                 self.minlongitude = float(row["Longitude"])
 
-
         logger.info("latitudes %s %s", self.minlatitude, self.minlongitude)
         self.genTrackPolygon()
 
@@ -128,7 +137,14 @@ class dashGenerator:
         logger.info("laps: %s", self.laps)
         logger.info("general stats gathered")
 
-    def convert_seconds(self,seconds):
+        # Initialize arrow_images dictionary
+        self.arrow_images = {}
+        for angle in range(-90, 91):
+            path = f"angles/arrow_{angle:03d}.png"
+            if os.path.exists(path):
+                self.arrow_images[angle] = Image.open(path).convert("RGBA")
+
+    def convert_seconds(self, seconds):
         minutes = seconds // 60
         remaining_seconds = seconds % 60
         return minutes, remaining_seconds
@@ -207,8 +223,7 @@ class dashGenerator:
                 polygon = polygon + self.calcCoordinates(row)
             #        logger.info("polygon xy: %s", polygon)
 
-        global trackimage
-        trackimage = self.generate_trackimage(polygon)
+        self.trackimage = self.generate_trackimage(polygon)
 
     def generate_trackimage(self, polygon):
         trackimage = Image.new(
@@ -293,11 +308,12 @@ class dashGenerator:
         x,
         y,
         text,
-        font="font/DejaVuSansCondensed-Bold.ttf",
+        font=None,
         color=(255, 255, 255, 200),
         align="center",
     ):
-        font = ImageFont.truetype(font, size=self.fontsize)
+        if font is None:
+            font = self.font
         draw_point = (x, y + 6)
         length = draw.textlength(text, font=font)
         draw.rounded_rectangle(
@@ -310,7 +326,6 @@ class dashGenerator:
             outline=None,
         )
         draw.text(draw_point, text, font=font, fill=color, align=align)
-
 
     def generate_image(self, row=dict):
         frame = row["Record"]
@@ -379,7 +394,7 @@ class dashGenerator:
                     if int(row["Lap"]) > 2:
                         if lap <= self.prevBest:
                             self.prevBest = lap
-                            color = (30,255,30,200)
+                            color = (30, 255, 30, 200)
                         else:
                             color = (255, 255, 255, 200)
                     else:
@@ -388,17 +403,24 @@ class dashGenerator:
                     self.generate_textbox(
                         draw=draw,
                         x=self.width * 0.08,
-                        y=self.height * 0.10 + self.fontsize * 2 + self.fontsize * 0.15 * 2 + self.fontsize * 0.15 * lapcnt + self.fontsize * lapcnt,
+                        y=self.height * 0.10
+                        + self.fontsize * 2
+                        + self.fontsize * 0.15 * 2
+                        + self.fontsize * 0.15 * lapcnt
+                        + self.fontsize * lapcnt,
                         # Prepare lap time formatting
-                        text="Lap " + str(lapcnt) + ": " +
-                             str(self.convert_seconds(int(str(lap).split(".")[0]))[0]) + ":" +
-                             str(self.convert_seconds(int(str(lap).split(".")[0]))[1]) + "." +
-                             str(lap).split(".")[1],
+                        text="Lap "
+                        + str(lapcnt)
+                        + ": "
+                        + str(self.convert_seconds(int(str(lap).split(".")[0]))[0])
+                        + ":"
+                        + str(self.convert_seconds(int(str(lap).split(".")[0]))[1])
+                        + "."
+                        + str(lap).split(".")[1],
                         align="left",
                         color=color,
                     )
                 lapcnt = lapcnt + 1
-
 
         self.generate_textbox(
             draw=draw,
@@ -407,19 +429,20 @@ class dashGenerator:
             text=speed,
         )
 
-        drawimage = self.draw_position(row, trackimage)
+        drawimage = self.draw_position(row, self.trackimage)
 
         img.paste(
             drawimage,
             (self.width - int(self.trackwidth) - int(self.trackwidth * 1), 50),
         )
 
-        overlay = Image.open(f"angles/arrow_{orglean:03d}.png")
-        img.paste(
-            overlay,
-            (int(self.width * 0.8), int(self.height * 0.65)),
-            overlay,
-        )
+        overlay = self.arrow_images.get(orglean)
+        if overlay:
+            img.paste(
+                overlay,
+                (int(self.width * 0.8), int(self.height * 0.74)),
+                overlay,
+            )
 
         self.generate_textbox(
             draw=draw, x=self.width * 0.832, y=self.height * 0.74, text=lean
@@ -441,6 +464,6 @@ class dashGenerator:
             align="right",
         )
 
-        img.save(filename, "PNG",compress_level=1)
+        img.save(filename, "PNG", compress_level=1)
         # logger.info("Saved file " + filename)
         self.log.append("Saved file " + filename)
