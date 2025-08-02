@@ -5,10 +5,12 @@ import logging
 import os
 import queue
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from multiprocessing import cpu_count
 
@@ -285,8 +287,195 @@ class dashGenerator:
         q.join()
         logger.info("All images built")
 
-    async def generate_movie(self):
+    async def generate_images_batched(self, batch_size=1000):
+        """Generate images in batches and create video segments incrementally"""
+        total_rows = len(self.rows)
+        total_batches = (total_rows + batch_size - 1) // batch_size
 
+        # Semaphore to limit concurrent ffmpeg instances
+        ffmpeg_semaphore = asyncio.Semaphore(2)
+
+        # List to collect all segment paths and tasks
+        segment_tasks = []
+        segment_paths = []
+
+        logger.info(
+            f"Processing {total_rows} frames in {total_batches} batches of {batch_size}"
+        )
+
+        # Create a task for each batch that will:
+        # 1. Generate images for the batch
+        # 2. Then immediately start ffmpeg for that batch
+        async def process_batch(batch_idx):
+            start_idx = batch_idx * batch_size
+            end_idx = min(start_idx + batch_size, total_rows)
+            batch_rows = self.rows[start_idx:end_idx]
+
+            logger.info(
+                f"Processing batch {batch_idx + 1}/{total_batches} (frames {start_idx}-{end_idx-1})"
+            )
+
+            # Generate images for this batch
+            await self._generate_batch_images(batch_rows, batch_idx)
+
+            # Create video segment path
+            segment_path = f"{self.filename}_segment_{batch_idx:04d}.mov"
+            segment_paths.append(segment_path)
+
+            logger.info(f"Batch {batch_idx + 1} images ready, starting ffmpeg...")
+
+            # Start ffmpeg for this batch immediately
+            await self._create_video_segment(
+                batch_idx, segment_path, ffmpeg_semaphore, batch_rows
+            )
+
+        # Start all batch processing tasks concurrently
+        batch_tasks = [process_batch(batch_idx) for batch_idx in range(total_batches)]
+        await asyncio.gather(*batch_tasks)
+
+        logger.info("All video segments created, concatenating...")
+
+        # Concatenate all segments
+        final_output = await self._concatenate_segments(segment_paths)
+
+        # Cleanup segment files
+        for segment in segment_paths:
+            if os.path.exists(segment):
+                os.remove(segment)
+
+        return final_output
+
+    async def _generate_batch_images(self, batch_rows, batch_idx):
+        """Generate images for a specific batch"""
+        logger.info(
+            f"Starting image generation for batch {batch_idx + 1} ({len(batch_rows)} frames)"
+        )
+
+        # Use ThreadPoolExecutor to process only this batch's rows
+        with ThreadPoolExecutor(max_workers=cpu_count()) as executor:
+            # Submit all batch rows for processing
+            futures = [executor.submit(self.generate_image, row) for row in batch_rows]
+
+            # Wait for all images in this batch to complete
+            for future in futures:
+                future.result()  # This will raise an exception if image generation failed
+
+        logger.info(f"BATCH {batch_idx + 1} IMAGES COMPLETED - ready for ffmpeg")
+
+    async def _create_video_segment(
+        self, batch_idx, segment_path, semaphore, batch_rows
+    ):
+        """Create a video segment from a batch of images"""
+        logger.info(f"Waiting for ffmpeg slot for batch {batch_idx + 1}...")
+        async with semaphore:
+            logger.info(
+                f"FFMPEG STARTED: Creating video segment {batch_idx + 1}: {segment_path}"
+            )
+
+            try:
+                # Count available frames for this batch
+                frame_count = 0
+                for row in batch_rows:
+                    frame_num = int(row["Record"])
+                    frame_file = f"{self.foldername}frame{frame_num:08d}.png"
+                    if os.path.exists(frame_file):
+                        frame_count += 1
+                    else:
+                        logger.warning(f"Frame file missing: {frame_file}")
+
+                if frame_count == 0:
+                    logger.error(
+                        f"Batch {batch_idx + 1}: No frames found! Skipping ffmpeg."
+                    )
+                    return
+
+                logger.info(
+                    f"Batch {batch_idx + 1}: Processing {frame_count} frames with ffmpeg"
+                )
+
+                # Use pattern-based input like the original working method
+                # Create a temporary directory with only this batch's frames
+                batch_dir = f"{self.tmpdir.name}/batch_{batch_idx}"
+                os.makedirs(batch_dir, exist_ok=True)
+
+                # Copy/link only the frames for this batch
+                for row in batch_rows:
+                    frame_num = int(row["Record"])
+                    src_frame = f"{self.foldername}frame{frame_num:08d}.png"
+                    dst_frame = f"{batch_dir}/frame{frame_num:08d}.png"
+                    if os.path.exists(src_frame):
+                        os.link(src_frame, dst_frame)  # Hard link to save space
+
+                batch_pattern = f"{batch_dir}/frame*.png"
+
+                cmd = (
+                    ffmpeg.input(batch_pattern, pattern_type="glob", framerate=25)
+                    .output(
+                        segment_path,
+                        vcodec="prores_ks",
+                        pix_fmt="yuva444p10le",
+                        qscale=4,
+                    )
+                    .overwrite_output()
+                )
+                logger.info(f"FFmpeg command: {' '.join(cmd.compile())}")
+
+                await asyncio.get_event_loop().run_in_executor(None, lambda: cmd.run())
+                logger.info(
+                    f"FFMPEG COMPLETED: Video segment {batch_idx + 1}: {segment_path}"
+                )
+
+                # Clean up batch directory
+                import shutil
+
+                shutil.rmtree(batch_dir)
+
+            except Exception as e:
+                logger.error(f"Error creating video segment {batch_idx + 1}: {e}")
+                # Clean up batch directory on error
+                batch_dir = f"{self.tmpdir.name}/batch_{batch_idx}"
+                if os.path.exists(batch_dir):
+                    import shutil
+
+                    shutil.rmtree(batch_dir)
+                raise
+
+    async def _concatenate_segments(self, video_segments):
+        """Concatenate all video segments into final output"""
+        final_output = self.filename + ".mov"
+
+        # Create concat file list
+        concat_file = f"{self.tmpdir.name}/concat_list.txt"
+        with open(concat_file, "w") as f:
+            for segment in video_segments:
+                if os.path.exists(segment):
+                    f.write(f"file '{os.path.abspath(segment)}'\n")
+                else:
+                    logger.warning(f"Segment file not found: {segment}")
+
+        try:
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: (
+                    ffmpeg.input(concat_file, format="concat", safe=0)
+                    .output(final_output, c="copy")
+                    .overwrite_output()
+                    .run()
+                ),
+            )
+            logger.info(f"Final video created: {final_output}")
+            self.tmpdir.cleanup()
+            return final_output
+        except Exception as e:
+            logger.error(f"Error concatenating segments: {e}")
+            raise
+
+    async def generate_movie(self):
+        """Generate movie using incremental batch processing"""
+        return await self.generate_images_batched()
+
+    async def generate_movie_legacy(self):
+        """Original movie generation method (kept for reference)"""
         pass1 = (
             ffmpeg.input(self.foldername + "*.png", pattern_type="glob", framerate=25)
             .output(
@@ -351,7 +540,8 @@ class dashGenerator:
 
         gforce = row["GForceX"]
 
-        filename = self.foldername + "frame" + frame.rjust(8, "0") + ".png"
+        # Generate filename with frame number padded to 8 digits
+        filename = self.foldername + "frame" + str(int(frame)).rjust(8, "0") + ".png"
 
         img = Image.new("RGBA", (self.width, self.height), (0, 0, 0, 0))
 

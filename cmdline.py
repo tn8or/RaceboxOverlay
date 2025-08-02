@@ -42,7 +42,6 @@ async def parse_file(filename):
     output = dashGenerator(
         rows=uploaddata, header=uploadHeader, width=1920, filename=filename
     )
-    await output.generate_images()
     outputfile_path = await output.generate_movie()
 
     return ("output file: %s", outputfile_path)
