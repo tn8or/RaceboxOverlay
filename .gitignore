@@ -7,3 +7,5 @@ __pycache/*
 *mov
 *png
 *svg
+laptimes.db
+csv.old

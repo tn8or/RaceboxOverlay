@@ -17,6 +17,8 @@ from multiprocessing import cpu_count
 import ffmpeg
 from PIL import Image, ImageDraw, ImageFont
 
+from database import LapTimeDatabase
+
 
 def setup_logging():
     logger = logging.getLogger()
@@ -62,6 +64,7 @@ class dashGenerator:
         self.hasShownLaps = False
         self.prevBest = 9999999999
         self.trackimage = None
+        self.last_lap_number = 0  # Track the last lap number for lap timer updates
 
         if width == 1920:
             self.fontsize = 50
@@ -141,16 +144,61 @@ class dashGenerator:
 
         self.genTrackPolygon()
 
+        # Parse lap times and sector times from header
+        self.sector_times = {}  # {lap_number: [sector1, sector2, ...]}
+        self.real_time_sectors = (
+            {}
+        )  # Track sectors as they complete during video generation
+        self.completed_sectors = {}  # Track which sectors are completed for each lap
         for row in header:
             if row.startswith("Lap "):
-                lap = row.split(",")
-                if len(lap) > 1:
-                    lap = float(lap[1].strip())
-                    if lap not in self.laps:
-                        self.laps.append(lap)
+                lap_parts = row.split(",")
+                if len(lap_parts) > 1:
+                    lap_time = float(lap_parts[1].strip())
+                    if lap_time not in self.laps:
+                        self.laps.append(lap_time)
+
+                    # Extract lap number and sector times
+                    lap_number = int(lap_parts[0].split()[1])
+                    sectors = []
+                    if len(lap_parts) > 3 and lap_parts[2].strip() == "sectors":
+                        # Parse sector times (skip "sectors" and take the numeric values)
+                        for i in range(3, len(lap_parts)):
+                            try:
+                                sector_time = float(lap_parts[i].strip())
+                                if sector_time > 0:  # Only include valid sector times
+                                    sectors.append(sector_time)
+                            except ValueError:
+                                continue
+                    self.sector_times[lap_number] = sectors
+
+        # Extract track information from header
+        self.track_name = "Unknown Track"
+        self.session_date = "Unknown Date"
+        self.date_utc = ""
+
+        for row in header:
+            if row.startswith("Track,"):
+                self.track_name = row.split(",")[1].strip()
+            elif row.startswith("Date UTC,"):
+                self.date_utc = row.split(",")[1].strip()
+            elif row.startswith("Date,"):
+                self.session_date = row.split(",")[1].strip()
+
+        # Initialize database
+        self.db = LapTimeDatabase()
+        self.session_id = self.db.get_or_create_session(
+            self.date_utc, self.track_name, self.session_date
+        )
+
+        # Store lap and sector data in database
+        for lap_num, lap_time in enumerate(self.laps, 1):
+            sectors = self.sector_times.get(lap_num, [])
+            self.db.store_lap_with_sectors(self.session_id, lap_num, lap_time, sectors)
 
         logger.info("found %s laps", len(self.laps))
         logger.info("laps: %s", self.laps)
+        logger.info("Track: %s, Session: %s", self.track_name, self.session_date)
         logger.info("general stats gathered")
 
         # Initialize speed graph data structures
@@ -193,10 +241,508 @@ class dashGenerator:
             logger.warning(f"Could not parse start timestamp, using default: {e}")
             return "00:00:00:00"
 
+    def get_sector_counter_text(self, current_row):
+        """Generate sector counter display with actual times as sectors complete"""
+        current_lap = int(current_row["Lap"])
+        if current_lap <= 0:
+            return ""
+
+        current_frame = int(current_row["Record"])
+
+        # Find total frames in current lap to calculate progress
+        lap_frames = []
+        for row in self.rows:
+            if int(row["Lap"]) == current_lap:
+                lap_frames.append(int(row["Record"]))
+
+        if not lap_frames:
+            return ""
+
+        lap_start = min(lap_frames)
+        lap_end = max(lap_frames)
+        total_frames = lap_end - lap_start if lap_end > lap_start else 1
+        current_progress = (current_frame - lap_start) / total_frames
+
+        # Initialize sectors for this lap if not exists
+        if current_lap not in self.real_time_sectors:
+            self.real_time_sectors[current_lap] = {}
+            self.completed_sectors[current_lap] = set()
+
+        # Calculate sector times based on progress (assuming 3 equal sectors)
+        sector_1_progress = 0.33
+        sector_2_progress = 0.66
+
+        current_lap_time = self.get_current_lap_time(current_row)
+
+        # Build sector display text
+        sector_display = []
+
+        if (
+            current_progress >= sector_1_progress
+            and 1 not in self.completed_sectors[current_lap]
+        ):
+            # Just completed sector 1
+            sector_1_time = current_lap_time * sector_1_progress
+            self.real_time_sectors[current_lap][1] = sector_1_time
+            self.completed_sectors[current_lap].add(1)
+            # Store in database for real-time color updates
+            try:
+                self.db.store_sector(self.session_id, current_lap, 1, sector_1_time)
+            except:
+                pass  # May already exist
+
+        if (
+            current_progress >= sector_2_progress
+            and 2 not in self.completed_sectors[current_lap]
+        ):
+            # Just completed sector 2
+            sector_1_time = self.real_time_sectors[current_lap].get(1, 0)
+            sector_2_time = current_lap_time * sector_2_progress - sector_1_time
+            self.real_time_sectors[current_lap][2] = sector_2_time
+            self.completed_sectors[current_lap].add(2)
+            # Store in database for real-time color updates
+            try:
+                self.db.store_sector(self.session_id, current_lap, 2, sector_2_time)
+            except:
+                pass  # May already exist
+
+        if current_progress >= 1.0 and 3 not in self.completed_sectors[current_lap]:
+            # Just completed sector 3 (lap finished)
+            sector_1_time = self.real_time_sectors[current_lap].get(1, 0)
+            sector_2_time = self.real_time_sectors[current_lap].get(2, 0)
+            sector_3_time = current_lap_time - sector_1_time - sector_2_time
+            self.real_time_sectors[current_lap][3] = sector_3_time
+            self.completed_sectors[current_lap].add(3)
+            # Store in database for real-time color updates
+            try:
+                self.db.store_sector(self.session_id, current_lap, 3, sector_3_time)
+            except:
+                pass  # May already exist
+
+        # Build display text with completed sector times
+        if 1 in self.completed_sectors[current_lap]:
+            s1_time = self.real_time_sectors[current_lap][1]
+            sector_display.append(f"S1: {s1_time:.3f}")
+        else:
+            sector_display.append("S1:")
+
+        if 2 in self.completed_sectors[current_lap]:
+            s2_time = self.real_time_sectors[current_lap][2]
+            sector_display.append(f"S2: {s2_time:.3f}")
+        elif 1 in self.completed_sectors[current_lap]:
+            sector_display.append("S2:")
+
+        if 3 in self.completed_sectors[current_lap]:
+            s3_time = self.real_time_sectors[current_lap][3]
+            sector_display.append(f"S3: {s3_time:.3f}")
+        elif 2 in self.completed_sectors[current_lap]:
+            sector_display.append("S3:")
+
+        return "  ".join(sector_display)
+
+    def draw_sector_counter_with_colors(self, draw, current_row, x, y):
+        """Draw sector counter with individual colors for each sector"""
+        current_lap = int(current_row["Lap"])
+        if current_lap <= 0:
+            return
+
+        current_frame = int(current_row["Record"])
+
+        # Find total frames in current lap to calculate progress
+        lap_frames = []
+        for row in self.rows:
+            if int(row["Lap"]) == current_lap:
+                lap_frames.append(int(row["Record"]))
+
+        if not lap_frames:
+            return
+
+        lap_start = min(lap_frames)
+        lap_end = max(lap_frames)
+        total_frames = lap_end - lap_start if lap_end > lap_start else 1
+        current_progress = (current_frame - lap_start) / total_frames
+
+        # Initialize sectors for this lap if not exists
+        if current_lap not in self.real_time_sectors:
+            self.real_time_sectors[current_lap] = {}
+            self.completed_sectors[current_lap] = set()
+
+        # Calculate sector times based on progress (assuming 3 equal sectors)
+        sector_1_progress = 0.33
+        sector_2_progress = 0.66
+
+        current_lap_time = self.get_current_lap_time(current_row)
+
+        # Update completed sectors based on progress
+        if (
+            current_progress >= sector_1_progress
+            and 1 not in self.completed_sectors[current_lap]
+        ):
+            sector_1_time = current_lap_time * sector_1_progress
+            self.real_time_sectors[current_lap][1] = sector_1_time
+            self.completed_sectors[current_lap].add(1)
+            try:
+                self.db.store_sector(self.session_id, current_lap, 1, sector_1_time)
+            except:
+                pass
+
+        if (
+            current_progress >= sector_2_progress
+            and 2 not in self.completed_sectors[current_lap]
+        ):
+            sector_1_time = self.real_time_sectors[current_lap].get(1, 0)
+            sector_2_time = current_lap_time * sector_2_progress - sector_1_time
+            self.real_time_sectors[current_lap][2] = sector_2_time
+            self.completed_sectors[current_lap].add(2)
+            try:
+                self.db.store_sector(self.session_id, current_lap, 2, sector_2_time)
+            except:
+                pass
+
+        if current_progress >= 1.0 and 3 not in self.completed_sectors[current_lap]:
+            sector_1_time = self.real_time_sectors[current_lap].get(1, 0)
+            sector_2_time = self.real_time_sectors[current_lap].get(2, 0)
+            sector_3_time = current_lap_time - sector_1_time - sector_2_time
+            self.real_time_sectors[current_lap][3] = sector_3_time
+            self.completed_sectors[current_lap].add(3)
+            try:
+                self.db.store_sector(self.session_id, current_lap, 3, sector_3_time)
+            except:
+                pass
+
+        # Draw each sector with its own color
+        current_x = x
+
+        # Create font for text measurement
+        try:
+            font = ImageFont.truetype(
+                "font/DejaVuSansCondensed-Bold.ttf", size=self.fontsize
+            )
+        except Exception:
+            font = ImageFont.load_default()
+
+        # Sector 1
+        if 1 in self.completed_sectors[current_lap]:
+            # Use actual CSV sector time for color determination if available
+            if (
+                current_lap in self.sector_times
+                and len(self.sector_times[current_lap]) >= 1
+            ):
+                s1_time = self.sector_times[current_lap][0]  # First sector from CSV
+            else:
+                s1_time = self.real_time_sectors[current_lap][
+                    1
+                ]  # Fallback to calculated
+            s1_text = f"S1: {s1_time:.3f}"
+            s1_color = self.get_sector_color(current_lap, 1, s1_time)
+        else:
+            s1_text = "S1:"
+            s1_color = (200, 200, 200, 180)  # Gray for incomplete
+
+        self.generate_textbox(
+            draw=draw,
+            x=current_x,
+            y=y,
+            text=s1_text,
+            align="left",
+            color=s1_color,
+        )
+        # Use proper text width for spacing
+        s1_width = draw.textlength(s1_text, font=font)
+        current_x += s1_width + 25  # Proper spacing between sectors
+
+        # Sector 2 (only show if sector 1 is completed or sector 2 is in progress)
+        if 2 in self.completed_sectors[current_lap]:
+            # Use actual CSV sector time for color determination if available
+            if (
+                current_lap in self.sector_times
+                and len(self.sector_times[current_lap]) >= 2
+            ):
+                s2_time = self.sector_times[current_lap][1]  # Second sector from CSV
+            else:
+                s2_time = self.real_time_sectors[current_lap][
+                    2
+                ]  # Fallback to calculated
+            s2_text = f"S2: {s2_time:.3f}"
+            s2_color = self.get_sector_color(current_lap, 2, s2_time)
+        elif 1 in self.completed_sectors[current_lap]:
+            s2_text = "S2:"
+            s2_color = (200, 200, 200, 180)  # Gray for incomplete
+        else:
+            s2_text = ""
+
+        if s2_text:
+            self.generate_textbox(
+                draw=draw,
+                x=current_x,
+                y=y,
+                text=s2_text,
+                align="left",
+                color=s2_color,
+            )
+            # Use proper text width for spacing
+            s2_width = draw.textlength(s2_text, font=font)
+            current_x += s2_width + 25  # Proper spacing between sectors
+
+        # Sector 3 (only show if sector 2 is completed or sector 3 is in progress)
+        if 3 in self.completed_sectors[current_lap]:
+            # Use actual CSV sector time for color determination if available
+            if (
+                current_lap in self.sector_times
+                and len(self.sector_times[current_lap]) >= 3
+            ):
+                s3_time = self.sector_times[current_lap][2]  # Third sector from CSV
+            else:
+                s3_time = self.real_time_sectors[current_lap][
+                    3
+                ]  # Fallback to calculated
+            s3_text = f"S3: {s3_time:.3f}"
+            s3_color = self.get_sector_color(current_lap, 3, s3_time)
+        elif 2 in self.completed_sectors[current_lap]:
+            s3_text = "S3:"
+            s3_color = (200, 200, 200, 180)  # Gray for incomplete
+        else:
+            s3_text = ""
+
+        if s3_text:
+            self.generate_textbox(
+                draw=draw,
+                x=current_x,
+                y=y,
+                text=s3_text,
+                align="left",
+                color=s3_color,
+            )
+
     def convert_seconds(self, seconds):
         minutes = seconds // 60
         remaining_seconds = seconds % 60
         return minutes, remaining_seconds
+
+    def get_current_lap_time(self, current_row):
+        """Calculate elapsed time for current lap"""
+        current_lap = int(current_row["Lap"])
+        if current_lap == 0:
+            return 0.0
+
+        current_frame = int(current_row["Record"])
+
+        # Find the start frame of the current lap
+        lap_start_frame = None
+        for row in self.rows:
+            if int(row["Lap"]) == current_lap:
+                if lap_start_frame is None:
+                    lap_start_frame = int(row["Record"])
+                break
+
+        if lap_start_frame is None:
+            return 0.0
+
+        # Calculate elapsed frames and convert to seconds (assuming 25fps)
+        elapsed_frames = current_frame - lap_start_frame
+        elapsed_seconds = elapsed_frames / 25.0  # 25 fps
+        return elapsed_seconds
+
+    def get_lap_color(
+        self, lap_number: int, lap_time: float, context_lap: int = None
+    ) -> tuple:
+        """
+        Determine color for lap time based on fastest so far up to context_lap.
+
+        Args:
+            lap_number: The lap whose time we're coloring
+            lap_time: The time for that lap
+            context_lap: The current lap being processed (for "point in time" context)
+                        If None, uses lap_number as context
+        """
+        try:
+            # Use context_lap to determine what laps to consider for "fastest so far"
+            current_context = context_lap if context_lap is not None else lap_number
+
+            # Get fastest lap up to the current context
+            fastest_lap_number = self.get_fastest_lap_number_so_far(current_context)
+
+            # This lap is purple if it's currently the fastest so far
+            is_currently_fastest = fastest_lap_number == lap_number
+
+            if is_currently_fastest:
+                return (128, 0, 128, 255)  # Purple - currently fastest so far
+            else:
+                return (255, 255, 255, 200)  # White - normal or previously fastest
+        except Exception as e:
+            logger.warning("Error determining lap color: %s", e)
+            return (255, 255, 255, 200)
+
+    def get_fastest_lap_number_so_far(self, current_lap: int) -> int:
+        """Get the lap number that has the fastest time up to and including current_lap"""
+        fastest_time = None
+        fastest_lap_num = None
+
+        # Look through completed laps up to current lap
+        for lap_num in range(1, current_lap + 1):
+            if lap_num <= len(self.laps):
+                lap_time = self.laps[lap_num - 1]
+                if fastest_time is None or lap_time < fastest_time:
+                    fastest_time = lap_time
+                    fastest_lap_num = lap_num
+
+        return fastest_lap_num
+
+    def get_fastest_lap_so_far(self, current_lap: int) -> float:
+        """Get the fastest lap time up to and including the current lap"""
+        fastest_time = None
+
+        # Look through completed laps up to current lap
+        for lap_num in range(1, current_lap + 1):
+            if lap_num in self.sector_times:
+                # Use lap time from CSV header if available
+                lap_time = self.laps[lap_num - 1] if lap_num <= len(self.laps) else None
+                if lap_time and (fastest_time is None or lap_time < fastest_time):
+                    fastest_time = lap_time
+
+        return fastest_time
+
+    def get_fastest_sector_so_far(self, current_lap: int, sector_number: int) -> float:
+        """Get the fastest sector time up to and including the current lap"""
+        fastest_time = None
+
+        # Look through completed laps up to current lap
+        for lap_num in range(1, current_lap + 1):
+            if (
+                lap_num in self.sector_times
+                and len(self.sector_times[lap_num]) >= sector_number
+            ):
+                sector_time = self.sector_times[lap_num][sector_number - 1]  # 0-indexed
+                if fastest_time is None or sector_time < fastest_time:
+                    fastest_time = sector_time
+
+        return fastest_time
+
+    def get_sector_color(
+        self,
+        lap_number: int,
+        sector_number: int,
+        sector_time: float,
+        context_lap: int = None,
+    ) -> tuple:
+        """
+        Determine color for sector time based on fastest so far up to context_lap.
+
+        Args:
+            lap_number: The lap whose sector time we're coloring
+            sector_number: Which sector (1, 2, or 3)
+            sector_time: The time for that sector
+            context_lap: The current lap being processed (for "point in time" context)
+                        If None, uses lap_number as context
+        """
+        try:
+            # Use context_lap to determine what laps to consider for "fastest so far"
+            current_context = context_lap if context_lap is not None else lap_number
+
+            # Get the lap that has the fastest sector up to the current context
+            fastest_lap_number = self.get_fastest_sector_lap_number_so_far(
+                current_context, sector_number
+            )
+
+            # This sector is purple if it's currently the fastest so far
+            is_currently_fastest = fastest_lap_number == lap_number
+
+            if is_currently_fastest:
+                return (128, 0, 128, 255)  # Purple - currently fastest so far
+            else:
+                return (180, 180, 180, 180)  # Light gray - normal or previously fastest
+        except Exception as e:
+            logger.warning("Error determining sector color: %s", e)
+            return (180, 180, 180, 180)
+
+    def get_fastest_sector_lap_number_so_far(
+        self, current_lap: int, sector_number: int
+    ) -> int:
+        """Get the lap number that has the fastest sector time up to and including current_lap"""
+        fastest_time = None
+        fastest_lap_num = None
+
+        # Look through completed laps up to current lap
+        for lap_num in range(1, current_lap + 1):
+            if (
+                lap_num in self.sector_times
+                and len(self.sector_times[lap_num]) >= sector_number
+            ):
+                sector_time = self.sector_times[lap_num][sector_number - 1]  # 0-indexed
+                if fastest_time is None or sector_time < fastest_time:
+                    fastest_time = sector_time
+                    fastest_lap_num = lap_num
+
+        return fastest_lap_num
+
+    def update_lap_times(self, current_lap_number: int):
+        """Update lap times when starting a new lap"""
+        try:
+            # Skip if we're still on the first lap or going backwards
+            if current_lap_number <= 1:
+                return
+
+            # Calculate the previous lap time
+            previous_lap = current_lap_number - 1
+            lap_data = []
+
+            for row in self.rows:
+                if int(row["Lap"]) == previous_lap:
+                    lap_data.append(row)
+
+            if lap_data:
+                # Calculate lap time as difference between last and first frame of the lap
+                start_frame = int(lap_data[0]["Record"])
+                end_frame = int(lap_data[-1]["Record"])
+                lap_time = (end_frame - start_frame) / 25.0  # 25 fps
+
+                # Update laps list
+                while len(self.laps) < previous_lap:
+                    self.laps.append(0)
+
+                if len(self.laps) >= previous_lap:
+                    self.laps[previous_lap - 1] = lap_time
+                else:
+                    self.laps.append(lap_time)
+
+                # Store in database for real-time color updates
+                try:
+                    self.db.store_lap(self.session_id, previous_lap, lap_time)
+
+                    # Store sector times if available from real-time tracking
+                    if previous_lap in self.real_time_sectors:
+                        for sector_num, sector_time in self.real_time_sectors[
+                            previous_lap
+                        ].items():
+                            try:
+                                self.db.store_sector(
+                                    self.session_id,
+                                    previous_lap,
+                                    sector_num,
+                                    sector_time,
+                                )
+                            except:
+                                pass  # May already exist
+                    # Also store any pre-existing sector times from header
+                    elif previous_lap in self.sector_times:
+                        for sector_num, sector_time in enumerate(
+                            self.sector_times[previous_lap], 1
+                        ):
+                            try:
+                                self.db.store_sector(
+                                    self.session_id,
+                                    previous_lap,
+                                    sector_num,
+                                    sector_time,
+                                )
+                            except:
+                                pass  # May already exist
+
+                except Exception as e:
+                    logger.warning("Error storing lap data in database: %s", e)
+
+        except Exception as e:
+            logger.warning("Error updating lap times: %s", e)
 
     def _preprocess_speed_data(self):
         """Preprocess speed data for each lap to enable graph visualization"""
@@ -724,8 +1270,7 @@ class dashGenerator:
         )
 
         # Use ThreadPoolExecutor to process only this batch's rows
-        # Limit to half the CPU cores to avoid memory overload
-        max_workers = max(1, cpu_count() // 2)
+        max_workers = max(1, cpu_count())
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all batch rows for processing
             futures = [executor.submit(self.generate_image, row) for row in batch_rows]
@@ -901,9 +1446,17 @@ class dashGenerator:
         font=None,
         color=(255, 255, 255, 200),
         align="center",
+        font_scale=1.0,
     ):
         if font is None:
-            font = self.font
+            # Apply font scaling
+            scaled_fontsize = int(self.fontsize * font_scale)
+            try:
+                font = ImageFont.truetype(
+                    "font/DejaVuSansCondensed-Bold.ttf", size=scaled_fontsize
+                )
+            except Exception:
+                font = ImageFont.load_default()
         draw_point = (x, y + 6)
         length = draw.textlength(text, font=font)
         draw.rounded_rectangle(
@@ -945,43 +1498,99 @@ class dashGenerator:
 
         draw = ImageDraw.Draw(img)
 
-        if int(row["Lap"]) > 0:
+        # Current lap info and timer
+        current_lap_number = int(row["Lap"])
+        current_lap_time = 0.0
+
+        # Calculate positioning for lap info
+        # Align with speed indicator and graph margin (left side)
+        lap_info_x = self.width * 0.08  # Same as speed indicator
+        # Align top with trackmap (which is at y=50)
+        lap_info_y = 50  # Same as trackmap top position
+
+        if current_lap_number > 0:
+            # Check if we're on a new lap and should update lap times
+            if current_lap_number != self.last_lap_number:
+                self.update_lap_times(current_lap_number)
+                self.last_lap_number = current_lap_number
+
+            # Calculate current lap time
+            current_lap_time = self.get_current_lap_time(row)
+
+            # Check if current lap just completed (progress = 100%) and store immediately
+            current_frame = int(row["Record"])
+            lap_frames = []
+            for r in self.rows:
+                if int(r["Lap"]) == current_lap_number:
+                    lap_frames.append(int(r["Record"]))
+
+            if lap_frames:
+                lap_start = min(lap_frames)
+                lap_end = max(lap_frames)
+                if lap_end > lap_start:
+                    current_progress = (current_frame - lap_start) / (
+                        lap_end - lap_start
+                    )
+                    # If lap just completed, store it immediately for real-time coloring
+                    if (
+                        current_progress >= 0.99
+                        and current_lap_number not in self.completed_sectors
+                    ):
+                        try:
+                            self.db.store_lap(
+                                self.session_id, current_lap_number, current_lap_time
+                            )
+                            # Mark as completed to avoid duplicate storage
+                            self.completed_sectors[current_lap_number] = set([1, 2, 3])
+                        except:
+                            pass  # May already exist
+
+            # Display current lap number and timer on same line
+            if current_lap_time > 0:
+                minutes, seconds = self.convert_seconds(int(current_lap_time))
+                timer_text = f" - {minutes}:{str(int(seconds)).zfill(2)}.{str(int((current_lap_time % 1) * 100)).zfill(2)}"
+                lap_with_timer = lap + timer_text
+            else:
+                lap_with_timer = lap
+
             self.generate_textbox(
                 draw=draw,
-                x=self.width * 0.08,
-                y=self.height * 0.10 + self.fontsize * 2 + self.fontsize * 0.15 * 2,
-                text=lap,
+                x=lap_info_x,
+                y=lap_info_y,
+                text=lap_with_timer,
                 align="left",
+                color=(255, 255, 255, 200),  # White color like other text
             )
 
-        # Show lap times after completing at least one lap (keep them visible even in lap 0)
-        if int(row["Lap"]) > 1 or self.hasShownLaps:
+            # Display sector counter on next line with individual sector colors
+            self.draw_sector_counter_with_colors(
+                draw, row, lap_info_x, lap_info_y + self.fontsize * 1.2
+            )  # Show lap times after completing at least one lap (keep them visible even in lap 0)
+        if current_lap_number > 1 or self.hasShownLaps:
             lapcnt = 1
             self.hasShownLaps = True
-            current_lap_for_display = int(row["Lap"])
+            current_lap_for_display = current_lap_number
             if current_lap_for_display == 0:
                 # make sure we show laptimes for the in-lap
                 current_lap_for_display = 999
             for lap in self.laps:
                 if lapcnt < current_lap_for_display:
-                    if current_lap_for_display > 2:
-                        if lap <= self.prevBest:
-                            self.prevBest = lap
-                            color = (30, 255, 30, 200)
-                        else:
-                            color = (255, 255, 255, 200)
-                    else:
-                        color = (255, 255, 255, 200)
+                    # Determine color for this lap time using current lap as context
+                    # This ensures previously fastest laps turn gray when beaten
+                    lap_color = self.get_lap_color(lapcnt, lap, current_lap_number)
+
+                    # Use 80% font for previous laps
+                    font_scale = 0.8
 
                     self.generate_textbox(
                         draw=draw,
-                        x=self.width * 0.08,
-                        y=self.height * 0.10
-                        + self.fontsize * 2
-                        + self.fontsize * 0.15 * 2
+                        x=lap_info_x,
+                        y=lap_info_y
+                        + self.fontsize
+                        * 2.5  # Offset for current lap and sector counter
                         + self.fontsize * 0.15 * lapcnt
-                        + self.fontsize * lapcnt,
-                        # Prepare lap time formatting with zero-padded seconds
+                        + self.fontsize * lapcnt * font_scale,
+                        # Prepare lap time formatting with zero-padded seconds (no sector times)
                         text="Lap "
                         + str(lapcnt)
                         + ": "
@@ -993,7 +1602,8 @@ class dashGenerator:
                         + "."
                         + str(lap).split(".")[1],
                         align="left",
-                        color=color,
+                        color=lap_color,
+                        font_scale=font_scale,
                     )
                 lapcnt = lapcnt + 1
 
