@@ -135,6 +135,8 @@ def _generate_image_worker_process(row, width, height, fontsize, foldername):
     """
     Standalone function for process-based image generation.
     This function recreates the necessary context in each process to generate images.
+    NOTE: This is a simplified version for demonstration. For full functionality,
+    we need to pass more class data or use threading instead of processes.
     """
     from PIL import Image, ImageDraw, ImageFont
     import logging
@@ -150,6 +152,7 @@ def _generate_image_worker_process(row, width, height, fontsize, foldername):
         frame = row["Record"]
         speed = row["Speed"]
         speed = speed[:-3] + " km/h"
+        lap = "Lap: " + row["Lap"]
         lean = float(row["LeanAngle"])
         orglean = int(round(lean))
         if lean > 0:
@@ -184,6 +187,17 @@ def _generate_image_worker_process(row, width, height, fontsize, foldername):
             )
             draw.text(draw_point, text, font=font, fill=color, align="center")
 
+        # Draw lap number (simplified - just current lap)
+        current_lap_number = int(row["Lap"])
+        if current_lap_number > 0:
+            generate_textbox_process(
+                draw=draw,
+                x=width * 0.08,
+                y=50,
+                text=lap,
+                font=font,
+            )
+
         # Draw speed indicator
         generate_textbox_process(
             draw=draw,
@@ -201,6 +215,10 @@ def _generate_image_worker_process(row, width, height, fontsize, foldername):
             text=lean,
             font=font
         )
+
+        # TODO: Add track map, sector times, speed graph, etc.
+        # These require class data that's not easily passed to processes
+        # For full functionality, consider using threading instead
 
         # Save the image
         img.save(filename)
@@ -1515,36 +1533,32 @@ class dashGenerator:
         # Note: With processes, each worker will create its own copy, but this reduces initial allocation
         image_template = Image.new("RGBA", (self.width, self.height), (0, 0, 0, 0))
 
-        # Use ProcessPoolExecutor for TRUE CPU parallelism (no GIL limitations)
-        from concurrent.futures import ProcessPoolExecutor
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            # SYSTEM OPTIMIZATION: Pre-warm process pool with dummy work to combat scheduler inertia
+        # Use ThreadPoolExecutor for FULL feature access with dynamic scaling
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # SYSTEM OPTIMIZATION: Pre-warm thread pool with dummy work to combat scheduler inertia
             if batch_idx > 0 and active_ffmpeg_count == 0:
-                # AGGRESSIVE: Process warm-up to ensure OS scheduler prioritizes Python processes
+                # AGGRESSIVE: Thread warm-up to ensure OS scheduler prioritizes Python threads
                 warmup_futures = [executor.submit(lambda: None) for _ in range(max_workers)]
                 for future in warmup_futures:
                     future.result()
-                logger.info(f"🔥 Process pool AGGRESSIVELY warmed up with {max_workers} processes")
+                logger.info(f"🔥 Thread pool AGGRESSIVELY warmed up with {max_workers} threads")
 
-            # Submit all batch rows for processing
-            # Note: With processes, we pass simple data rather than complex objects
+            # Submit all batch rows for processing with FULL dashboard generation
+            # Use the complete generate_image method for all features
             futures = [
                 executor.submit(
-                    _generate_image_worker_process,
+                    self._generate_image_optimized,
                     row,
-                    self.width,
-                    self.height,
-                    self.fontsize,
-                    self.foldername
+                    font_cache,
+                    image_template
                 )
                 for row in batch_rows
             ]
 
             # Wait for all images in this batch to complete
             for future in futures:
-                future.result()  # This will raise an exception if image generation failed
-
-        # Explicit garbage collection after batch completion to reduce memory pressure
+                future.result()  # This will raise an exception if image generation failed        # Explicit garbage collection after batch completion to reduce memory pressure
         import gc
         gc.collect()
 
