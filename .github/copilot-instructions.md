@@ -22,6 +22,7 @@ applyTo: '**/*.py'
 - For libraries or external dependencies, mention their usage and purpose in comments.
 - Use consistent naming conventions and follow language-specific best practices.
 - Write concise, efficient, and idiomatic code that is also easily understandable.
+- don't use unicode characters in output, comments or docstrings, as they may not render correctly in all environments.
 
 ## Code Style and Formatting
 

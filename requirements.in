@@ -16,6 +16,7 @@ pycparser
 python-dotenv
 python-multipart
 PyYAML
+psutil
 rich
 rich-toolkit
 shellingham

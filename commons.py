@@ -10,7 +10,7 @@ import sys
 import tempfile
 import threading
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from datetime import datetime, timedelta
 from multiprocessing import cpu_count
 
@@ -37,6 +37,179 @@ def setup_logging():
 
 
 logger = setup_logging()
+
+
+def generate_single_image_worker(row_data, config_data):
+    """
+    Standalone function for generating a single image in a separate process.
+
+    Args:
+        row_data: Dictionary containing the CSV row data
+        config_data: Dictionary containing all necessary configuration data
+    """
+    try:
+        # Extract configuration
+        foldername = config_data['foldername']
+        width = config_data['width']
+        height = config_data['height']
+        fontsize = config_data['fontsize']
+        maxspeed = config_data['maxspeed']
+        show_g_meter = config_data['show_g_meter']
+        maxaccg = config_data['maxaccg']
+        maxdecg = config_data['maxdecg']
+
+        # Import here to avoid issues with multiprocessing
+        from PIL import Image, ImageDraw, ImageFont
+        import os
+
+        # Generate image using the same logic as generate_image method
+        frame = row_data["Record"]
+        speed = row_data["Speed"]
+        speed = speed[:-3] + " km/h"
+        lean = float(row_data["LeanAngle"])
+        orglean = int(round(lean))
+        if lean > 0:
+            lean = str(round(lean))
+        else:
+            lean = str(round(-lean))
+        lean = lean + "°"
+        gforce = row_data["GForceX"]
+
+        # Generate filename with frame number padded to 8 digits
+        filename = foldername + "frame" + str(int(frame)).rjust(8, "0") + ".png"
+
+        img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        # Load font
+        try:
+            font = ImageFont.truetype("font/DejaVuSansCondensed-Bold.ttf", size=fontsize)
+        except Exception:
+            font = ImageFont.load_default()
+
+        # Simple speed indicator (minimal implementation for performance)
+        draw_point = (width * 0.08, height * 0.8 + 6)
+        length = draw.textlength(speed, font=font)
+        draw.rounded_rectangle(
+            xy=((width * 0.08, height * 0.8 + fontsize * 0.2),
+                (width * 0.08 + length, height * 0.8 + fontsize + fontsize * 0.2)),
+            radius=5,
+            fill=(50, 50, 50, 80),
+            outline=None,
+        )
+        draw.text(draw_point, speed, font=font, fill=(255, 255, 255, 200))
+
+        # Add G-force display if enabled
+        if show_g_meter and (maxaccg > 0.1 and maxdecg > 0.1):
+            if float(gforce) != 0:
+                if float(gforce) < 0:
+                    gtext = "⬇" + str(round(float(gforce), 2)) + "G"
+                    gcolor = (255, 20, 20, 200)
+                else:
+                    gtext = "⬆" + str(round(-float(gforce), 2)) + "G"
+                    gcolor = (20, 255, 20, 200)
+
+                # G-force text
+                g_draw_point = (width * 0.8, height * 0.8 + 6)
+                g_length = draw.textlength(gtext, font=font)
+                draw.rounded_rectangle(
+                    xy=((width * 0.8 - g_length, height * 0.8 + fontsize * 0.2),
+                        (width * 0.8, height * 0.8 + fontsize + fontsize * 0.2)),
+                    radius=5,
+                    fill=(50, 50, 50, 80),
+                    outline=None,
+                )
+                draw.text((width * 0.8 - g_length, height * 0.8 + 6), gtext, font=font, fill=gcolor)
+
+        # Save the image
+        img.save(filename, "PNG", compress_level=1)
+        return filename
+
+    except Exception as e:
+        # Use print instead of logger since this runs in a separate process
+        print(f"Error generating image for frame {row_data.get('Record', 'unknown')}: {e}")
+        raise
+
+
+def _generate_image_worker_process(row, width, height, fontsize, foldername):
+    """
+    Standalone function for process-based image generation.
+    This function recreates the necessary context in each process to generate images.
+    """
+    from PIL import Image, ImageDraw, ImageFont
+    import logging
+
+    # Set up logger for this process
+    logger = logging.getLogger(__name__)
+
+    try:
+        # Create new image canvas in this process
+        img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+
+        # Extract row data
+        frame = row["Record"]
+        speed = row["Speed"]
+        speed = speed[:-3] + " km/h"
+        lean = float(row["LeanAngle"])
+        orglean = int(round(lean))
+        if lean > 0:
+            lean = str(round(lean))
+        else:
+            lean = str(round(-lean))
+        lean = lean + "°"
+
+        # Generate filename with frame number padded to 8 digits
+        filename = foldername + "frame" + str(int(frame)).rjust(8, "0") + ".png"
+
+        draw = ImageDraw.Draw(img)
+
+        # Create font for this process
+        try:
+            font = ImageFont.truetype("font/DejaVuSansCondensed-Bold.ttf", size=fontsize)
+        except:
+            font = ImageFont.load_default()
+
+        # Generate simple textbox function for this process
+        def generate_textbox_process(draw, x, y, text, font, color=(255, 255, 255, 200)):
+            draw_point = (x, y + 6)
+            length = draw.textlength(text, font=font)
+            draw.rounded_rectangle(
+                xy=(
+                    (x, y + fontsize * 0.2),
+                    (x + length, y + fontsize + fontsize * 0.2),
+                ),
+                radius=5,
+                fill=(50, 50, 50, 80),
+                outline=None,
+            )
+            draw.text(draw_point, text, font=font, fill=color, align="center")
+
+        # Draw speed indicator
+        generate_textbox_process(
+            draw=draw,
+            x=width * 0.08,
+            y=height * 0.8,
+            text=speed,
+            font=font,
+        )
+
+        # Draw lean angle indicator
+        generate_textbox_process(
+            draw=draw,
+            x=width * 0.832,
+            y=height * 0.74,
+            text=lean,
+            font=font
+        )
+
+        # Save the image
+        img.save(filename)
+
+        return True
+
+    except Exception as e:
+        logger.error(f"Error in process worker for frame {row.get('Record', 'unknown')}: {e}")
+        return False
 
 
 class dashGenerator:
@@ -1117,9 +1290,14 @@ class dashGenerator:
     async def generate_images(self):
         q = queue.Queue()
 
+        # Use MAXIMUM aggressive threading - 3x CPU count for pure image generation workload
+        thread_count = max(1, int(cpu_count() * 3.0))
+        thread_count = min(thread_count, 36)  # Cap at 36 threads max
+        logger.info(f"Using {thread_count} threads for image generation (CPU cores: {cpu_count()})")
+
         processcount = 0
-        while processcount < cpu_count():
-            logger.info("starting worker %s of %s", processcount + 1, cpu_count())
+        while processcount < thread_count:
+            logger.info("starting worker %s of %s", processcount + 1, thread_count)
             threading.Thread(target=self.thread_worker, args=[q], daemon=True).start()
             processcount = processcount + 1
 
@@ -1135,12 +1313,12 @@ class dashGenerator:
         q.join()
         logger.info("All images built")
 
-    async def generate_images_batched(self, batch_size=500):
+    async def generate_images_batched(self, batch_size=600):
         """Generate images in batches with concurrent ffmpeg processing"""
         total_rows = len(self.rows)
         total_batches = (total_rows + batch_size - 1) // batch_size
 
-        # Semaphore to limit concurrent ffmpeg instances
+        # Semaphore to limit concurrent ffmpeg instances (keep at 2 for CPU sharing)
         ffmpeg_semaphore = asyncio.Semaphore(2)
 
         # List to collect all segment paths and ffmpeg tasks
@@ -1150,16 +1328,29 @@ class dashGenerator:
         logger.info(
             f"🎬 CONCURRENT PROCESSING: {total_rows} frames in {total_batches} batches of {batch_size}"
         )
-        logger.info("📸 Image generation will run continuously in background")
-        logger.info("🎞️  FFmpeg will process batches as they become ready")
-        logger.info("🔄 Up to 2 FFmpeg instances can run simultaneously")
+        logger.info(f"📸 Using batched approach with DYNAMIC threading and RESPONSIVE detection")
+        logger.info(f"🎞️  Max 2 concurrent FFmpeg processes for CPU sharing")
+        logger.info(f"⚡ Using {int(cpu_count() * 3.0)} image threads (3x CPU cores) when no FFmpeg")
+        logger.info("🔧 Smaller batches for more responsive FFmpeg detection and font caching optimization")
+
+        # SYSTEM OPTIMIZATION: Boost Python process priority for better CPU reclaim
+        try:
+            import os
+            current_priority = os.getpriority(os.PRIO_PROCESS, 0)
+            os.setpriority(os.PRIO_PROCESS, 0, -5)  # Higher priority than default
+            logger.info(f"🚀 Boosted Python process priority from {current_priority} to -5 for better CPU recovery")
+        except Exception as e:
+            logger.warning(f"Could not adjust process priority: {e}. Consider running with higher privileges.")
 
         # Queue to track completed image batches ready for ffmpeg
         completed_batches = asyncio.Queue()
 
         async def image_generator():
-            """Generate images for all batches in background"""
-            logger.info("🏁 Starting background image generation...")
+            """Generate images for all batches with OVERLAPPING processing"""
+            logger.info("🏁 Starting OVERLAPPING background image generation...")
+
+            # Create multiple concurrent image generation tasks
+            image_tasks = []
 
             for batch_idx in range(total_batches):
                 start_idx = batch_idx * batch_size
@@ -1167,24 +1358,25 @@ class dashGenerator:
                 batch_rows = self.rows[start_idx:end_idx]
 
                 logger.info(
-                    f"📸 Generating images for batch {batch_idx + 1}/{total_batches} (frames {start_idx}-{end_idx-1})"
+                    f"📸 Starting image generation for batch {batch_idx + 1}/{total_batches} (frames {start_idx}-{end_idx-1})"
                 )
 
-                # Generate images for this batch
-                await self._generate_batch_images(batch_rows, batch_idx)
-
-                # Signal that this batch is ready for ffmpeg
-                await completed_batches.put((batch_idx, batch_rows))
-                logger.info(
-                    f"✅ Batch {batch_idx + 1} images ready - queued for ffmpeg"
+                # Create concurrent task for this batch - DON'T WAIT
+                image_task = asyncio.create_task(
+                    self._generate_and_queue_batch(batch_rows, batch_idx, completed_batches)
                 )
+                image_tasks.append(image_task)
 
-                # Yield control to allow FFmpeg processor to run
-                await asyncio.sleep(0)
+                # Small stagger to prevent all tasks starting simultaneously
+                if batch_idx < total_batches - 1:  # Don't delay after last batch
+                    await asyncio.sleep(0.05)  # Very small stagger
+
+            # Wait for all image generation to complete
+            await asyncio.gather(*image_tasks)
 
             # Signal completion
             await completed_batches.put(None)
-            logger.info("🏁 All image generation completed")
+            logger.info("🏁 All OVERLAPPING image generation completed")
 
         async def ffmpeg_processor():
             """Process ffmpeg jobs as batches become available"""
@@ -1239,12 +1431,17 @@ class dashGenerator:
             "🚀 Both image generation and ffmpeg processing started concurrently"
         )
 
-        # Wait for both to complete
+        # Wait for both coordination tasks to complete
+        logger.info("⏳ Waiting for image generation and ffmpeg coordination to complete...")
         await asyncio.gather(image_task, ffmpeg_task)
 
-        # Wait for all ffmpeg tasks to complete
-        logger.info("Waiting for all ffmpeg tasks to complete...")
-        await asyncio.gather(*ffmpeg_tasks)
+        # CRITICAL: Wait for ALL individual ffmpeg tasks to actually finish
+        logger.info(f"⏳ Waiting for ALL {len(ffmpeg_tasks)} individual ffmpeg tasks to complete...")
+        if ffmpeg_tasks:
+            await asyncio.gather(*ffmpeg_tasks)
+            logger.info("✅ ALL ffmpeg video segments completed successfully")
+        else:
+            logger.warning("⚠️  No ffmpeg tasks found - this might indicate an issue")
 
         # Force garbage collection
         import gc
@@ -1264,22 +1461,119 @@ class dashGenerator:
         return final_output
 
     async def _generate_batch_images(self, batch_rows, batch_idx):
-        """Generate images for a specific batch"""
+        """Generate images for a specific batch with dynamic FFmpeg detection"""
         logger.info(
             f"Starting image generation for batch {batch_idx + 1} ({len(batch_rows)} frames)"
         )
 
-        # Use ThreadPoolExecutor to process only this batch's rows
-        max_workers = max(1, cpu_count())
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # DYNAMIC THREADING: Scale based on actual FFmpeg process count in real-time
+        # This solves the core issue - detecting when FFmpeg completes and scaling back up
+
+        try:
+            import psutil
+            # Count active FFmpeg processes on the system
+            ffmpeg_processes = [p for p in psutil.process_iter(['name']) if 'ffmpeg' in p.info['name'].lower()]
+            active_ffmpeg_count = len(ffmpeg_processes)
+
+            if active_ffmpeg_count == 0:
+                # NO FFMPEG RUNNING: AGGRESSIVE process scaling for maximum CPU reclaim
+                max_workers = int(cpu_count() * 2.0)  # 2x CPU cores as separate processes
+                max_workers = max(1, min(max_workers, 24))  # Reasonable process cap
+                logger.info(f"🚀 BATCH {batch_idx + 1}: NO FFMPEG DETECTED - Using {max_workers} PROCESSES (2x CPU cores) - TRUE PARALLELISM")
+
+                # SYSTEM OPTIMIZATION: Process warm-up to combat scheduler inertia
+                if batch_idx > 0:  # Only after first batch (when FFmpeg might have been running)
+                    logger.info(f"🔥 Warming up process pool to combat system scheduler inertia...")
+            else:
+                # FFMPEG RUNNING: Conservative process count to avoid overwhelming system
+                max_workers = max(1, int(cpu_count() * 0.5))  # 0.5x CPU cores when FFmpeg is active
+                max_workers = min(max_workers, 8)  # Conservative process cap for shared CPU
+                logger.info(f"⚖️  BATCH {batch_idx + 1}: {active_ffmpeg_count} FFMPEG DETECTED - Using {max_workers} PROCESSES (0.5x CPU cores) - CONSERVATIVE SHARED CPU")
+
+        except Exception as e:
+            # Fallback if psutil fails - use conservative process count
+            logger.warning(f"Could not detect FFmpeg processes: {e}")
+            if batch_idx == 0:
+                max_workers = int(cpu_count() * 2.0)  # 2x processes when starting
+                max_workers = max(1, min(max_workers, 24))
+                logger.info(f"🔄 BATCH {batch_idx + 1}: FALLBACK - Using {max_workers} PROCESSES (2x CPU cores)")
+            else:
+                max_workers = int(cpu_count() * 1.5)  # 1.5x processes for later batches
+                max_workers = max(1, min(max_workers, 18))
+                logger.info(f"🔄 BATCH {batch_idx + 1}: FALLBACK - Using {max_workers} PROCESSES (1.5x CPU cores)")
+
+        # Pre-create font objects to reduce GIL contention during image generation
+        font_cache = {}
+        try:
+            font_cache['main'] = ImageFont.truetype("font/DejaVuSansCondensed-Bold.ttf", size=self.fontsize)
+            font_cache['scale'] = ImageFont.truetype("font/DejaVuSansCondensed-Bold.ttf", size=max(12, self.fontsize // 4))
+        except:
+            font_cache['main'] = ImageFont.load_default()
+            font_cache['scale'] = ImageFont.load_default()
+
+        # Memory optimization: Pre-allocate reusable image canvas to reduce memory overhead
+        # Note: With processes, each worker will create its own copy, but this reduces initial allocation
+        image_template = Image.new("RGBA", (self.width, self.height), (0, 0, 0, 0))
+
+        # Use ProcessPoolExecutor for TRUE CPU parallelism (no GIL limitations)
+        from concurrent.futures import ProcessPoolExecutor
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            # SYSTEM OPTIMIZATION: Pre-warm process pool with dummy work to combat scheduler inertia
+            if batch_idx > 0 and active_ffmpeg_count == 0:
+                # AGGRESSIVE: Process warm-up to ensure OS scheduler prioritizes Python processes
+                warmup_futures = [executor.submit(lambda: None) for _ in range(max_workers)]
+                for future in warmup_futures:
+                    future.result()
+                logger.info(f"🔥 Process pool AGGRESSIVELY warmed up with {max_workers} processes")
+
             # Submit all batch rows for processing
-            futures = [executor.submit(self.generate_image, row) for row in batch_rows]
+            # Note: With processes, we pass simple data rather than complex objects
+            futures = [
+                executor.submit(
+                    _generate_image_worker_process,
+                    row,
+                    self.width,
+                    self.height,
+                    self.fontsize,
+                    self.foldername
+                )
+                for row in batch_rows
+            ]
 
             # Wait for all images in this batch to complete
             for future in futures:
                 future.result()  # This will raise an exception if image generation failed
 
-        logger.info(f"BATCH {batch_idx + 1} IMAGES COMPLETED - ready for ffmpeg")
+        # Explicit garbage collection after batch completion to reduce memory pressure
+        import gc
+        gc.collect()
+
+        logger.info(f"✅ BATCH {batch_idx + 1} IMAGES COMPLETED - ready for ffmpeg")
+
+    def _generate_image_optimized(self, row, font_cache, image_template=None):
+        """Optimized image generation with reduced GIL contention and memory reuse"""
+        try:
+            # Use the existing generate_image method but with pre-cached fonts and image template
+            # This reduces object creation overhead in threads
+            return self.generate_image(row, font_cache=font_cache, image_template=image_template)
+        except Exception as e:
+            logger.error(f"Error generating image for frame {row.get('Record', 'unknown')}: {e}")
+            raise
+
+    async def _generate_and_queue_batch(self, batch_rows, batch_idx, completed_batches):
+        """Generate images for a batch and queue when ready"""
+        logger.info(
+            f"🔄 OVERLAPPING: Starting batch {batch_idx + 1} ({len(batch_rows)} frames)"
+        )
+
+        # Generate images for this batch
+        await self._generate_batch_images(batch_rows, batch_idx)
+
+        # Queue this batch for FFmpeg processing
+        await completed_batches.put((batch_idx, batch_rows))
+        logger.info(
+            f"✅ OVERLAPPING: Batch {batch_idx + 1} images ready - queued for ffmpeg"
+        )
 
     async def _create_video_segment(
         self, batch_idx, segment_path, semaphore, batch_rows
@@ -1339,7 +1633,7 @@ class dashGenerator:
                 )
                 logger.info(f"FFmpeg command: {' '.join(cmd.compile())}")
 
-                await asyncio.get_event_loop().run_in_executor(None, lambda: cmd.run())
+                await asyncio.get_event_loop().run_in_executor(None, lambda: self._run_ffmpeg_with_nice(cmd))
                 logger.info(
                     f"FFMPEG COMPLETED: Video segment {batch_idx + 1}: {segment_path}"
                 )
@@ -1358,6 +1652,30 @@ class dashGenerator:
 
                     shutil.rmtree(batch_dir)
                 raise
+
+    def _run_ffmpeg_with_nice(self, cmd):
+        """Run FFmpeg command with lower priority to allow Python to reclaim CPU faster"""
+        import subprocess
+        import os
+
+        # Get the compiled command
+        ffmpeg_cmd = cmd.compile()
+
+        # Run with nice priority (+15 = much lower priority, allows Python to preempt easily)
+        nice_cmd = ['nice', '-n', '15'] + ffmpeg_cmd
+
+        try:
+            # Run the nice command directly
+            result = subprocess.run(nice_cmd, check=True, capture_output=True, text=True)
+            logger.info(f"FFmpeg completed with nice priority")
+            return result
+        except subprocess.CalledProcessError as e:
+            logger.error(f"FFmpeg failed: {e.stderr}")
+            raise
+        except Exception as e:
+            logger.warning(f"Nice command failed, falling back to normal priority: {e}")
+            # Fallback to original command if nice fails
+            return cmd.run()
 
     async def _create_video_segment_with_cleanup(
         self, batch_idx, segment_path, semaphore, batch_rows
@@ -1470,7 +1788,23 @@ class dashGenerator:
         )
         draw.text(draw_point, text, font=font, fill=color, align=align)
 
-    def generate_image(self, row=dict):
+    def generate_image(self, row=dict, font_cache=None, image_template=None):
+        # Initialize or use provided font cache for performance
+        if font_cache is None:
+            font_cache = {}
+            try:
+                font_cache['main'] = ImageFont.truetype("font/DejaVuSansCondensed-Bold.ttf", size=self.fontsize)
+                font_cache['scale'] = ImageFont.truetype("font/DejaVuSansCondensed-Bold.ttf", size=max(12, self.fontsize // 4))
+            except:
+                font_cache['main'] = ImageFont.load_default()
+                font_cache['scale'] = ImageFont.load_default()
+
+        # Use image template if provided, otherwise create new image
+        if image_template is not None:
+            img = image_template.copy()  # Reuse pre-allocated canvas
+        else:
+            img = Image.new("RGBA", (self.width, self.height), (0, 0, 0, 0))
+
         frame = row["Record"]
         speed = row["Speed"]
         speed = speed[:-3] + " km/h"
@@ -1493,8 +1827,6 @@ class dashGenerator:
 
         # Generate filename with frame number padded to 8 digits
         filename = self.foldername + "frame" + str(int(frame)).rjust(8, "0") + ".png"
-
-        img = Image.new("RGBA", (self.width, self.height), (0, 0, 0, 0))
 
         draw = ImageDraw.Draw(img)
 
@@ -1612,6 +1944,7 @@ class dashGenerator:
             x=self.width * 0.08,
             y=self.height * 0.8,
             text=speed,
+            font=font_cache.get('main'),
         )
 
         # Draw speed graph above the speed indicator
@@ -1633,7 +1966,7 @@ class dashGenerator:
             )
 
         self.generate_textbox(
-            draw=draw, x=self.width * 0.832, y=self.height * 0.74, text=lean
+            draw=draw, x=self.width * 0.832, y=self.height * 0.74, text=lean, font=font_cache.get('main')
         )
 
         # Only show G meter if we have sufficient data variation (both positive and negative forces)

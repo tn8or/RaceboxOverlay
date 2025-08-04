@@ -68,6 +68,8 @@ platformdirs==4.3.8
     # via
     #   -r requirements.in
     #   black
+psutil==7.0.0
+    # via -r requirements.in
 pycparser==2.22
     # via
     #   -r requirements.in
