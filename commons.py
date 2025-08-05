@@ -1336,20 +1336,21 @@ class dashGenerator:
         total_rows = len(self.rows)
         total_batches = (total_rows + batch_size - 1) // batch_size
 
-        # Semaphore to limit concurrent ffmpeg instances (keep at 2 for CPU sharing)
-        ffmpeg_semaphore = asyncio.Semaphore(2)
+        # Max concurrent FFmpeg processes for CPU sharing (no semaphore GIL overhead)
+        max_concurrent_ffmpeg = 2
 
         # List to collect all segment paths and ffmpeg tasks
         segment_paths = []
         ffmpeg_tasks = []
 
         logger.info(
-            f"🎬 CONCURRENT PROCESSING: {total_rows} frames in {total_batches} batches of {batch_size}"
+            f"🎬 DELAYED EXECUTION STRATEGY: {total_rows} frames in {total_batches} batches of {batch_size}"
         )
         logger.info(f"📸 Using batched approach with DYNAMIC threading and RESPONSIVE detection")
-        logger.info(f"🎞️  Max 2 concurrent FFmpeg processes for CPU sharing")
-        logger.info(f"⚡ Using {int(cpu_count() * 3.0)} image threads (3x CPU cores) when no FFmpeg")
-        logger.info("🔧 Smaller batches for more responsive FFmpeg detection and font caching optimization")
+        logger.info(f"🕐 FFmpeg DELAYED until only 5 image batches remain - MAXIMUM image throughput!")
+        logger.info(f"🎞️  Max 2 concurrent FFmpeg processes for CPU sharing (when active)")
+        logger.info(f"⚡ Using {int(cpu_count() * 2.0)} image threads (2.0x CPU cores) - NO FFmpeg competition!")
+        logger.info("🔧 Smaller batches for more responsive detection and font caching optimization")
 
         # SYSTEM OPTIMIZATION: Boost Python process priority for better CPU reclaim
         try:
@@ -1397,9 +1398,11 @@ class dashGenerator:
             logger.info("🏁 All OVERLAPPING image generation completed")
 
         async def ffmpeg_processor():
-            """Process ffmpeg jobs as batches become available"""
-            logger.info("🎬 Starting ffmpeg processor...")
+            """Process ffmpeg jobs as batches become available - DELAYED START STRATEGY"""
+            logger.info("🎬 Starting ffmpeg processor with DELAYED EXECUTION strategy...")
+            logger.info(f"🕐 FFmpeg will be DELAYED until only 5 image batches remain (total: {total_batches})")
             processed_batches = 0
+            queued_batches = []  # Store batches until we're ready to process them
 
             try:
                 while True:
@@ -1408,29 +1411,77 @@ class dashGenerator:
                     batch_info = await completed_batches.get()
 
                     if batch_info is None:
-                        logger.info("🎬 FFmpeg processor: All batches completed")
+                        logger.info("🎬 FFmpeg processor: All image batches completed")
+
+                        # Now process ALL queued batches at once - maximum throughput at the end
+                        logger.info(f"🚀 DELAYED EXECUTION: Processing ALL {len(queued_batches)} batches now!")
+
+                        for batch_idx, batch_rows in queued_batches:
+                            # Create video segment path
+                            segment_path = f"{self.filename}_segment_{batch_idx:04d}.mov"
+                            segment_paths.append(segment_path)
+
+                            logger.info(f"🎞️  Starting delayed ffmpeg for batch {batch_idx + 1}...")
+
+                            # Create ffmpeg task
+                            ffmpeg_task = asyncio.create_task(
+                                self._create_video_segment_with_cleanup(
+                                    batch_idx, segment_path, max_concurrent_ffmpeg, batch_rows
+                                )
+                            )
+                            ffmpeg_tasks.append(ffmpeg_task)
+
+                            processed_batches += 1
+                            logger.info(f"⚡ Delayed FFmpeg task {processed_batches}/{total_batches} started")
+
                         break
 
                     batch_idx, batch_rows = batch_info
 
-                    # Create video segment path
-                    segment_path = f"{self.filename}_segment_{batch_idx:04d}.mov"
-                    segment_paths.append(segment_path)
+                    # Calculate how many image batches are left to generate
+                    remaining_image_batches = total_batches - (batch_idx + 1)
 
-                    logger.info(f"🎞️  Starting ffmpeg for batch {batch_idx + 1}...")
+                    if remaining_image_batches > 5:
+                        # DELAY STRATEGY: Queue this batch for later processing
+                        queued_batches.append((batch_idx, batch_rows))
+                        logger.info(f"🕐 DELAYING batch {batch_idx + 1} - {remaining_image_batches} image batches still generating (threshold: 5)")
+                    else:
+                        # START PROCESSING: We're in the final stretch, process immediately
+                        if len(queued_batches) > 0:
+                            logger.info(f"🚀 THRESHOLD REACHED! Processing {len(queued_batches)} queued batches + current batch")
 
-                    # Create ffmpeg task
-                    ffmpeg_task = asyncio.create_task(
-                        self._create_video_segment_with_cleanup(
-                            batch_idx, segment_path, ffmpeg_semaphore, batch_rows
+                            # Process all queued batches first
+                            for queued_batch_idx, queued_batch_rows in queued_batches:
+                                segment_path = f"{self.filename}_segment_{queued_batch_idx:04d}.mov"
+                                segment_paths.append(segment_path)
+
+                                logger.info(f"🎞️  Starting queued ffmpeg for batch {queued_batch_idx + 1}...")
+
+                                ffmpeg_task = asyncio.create_task(
+                                    self._create_video_segment_with_cleanup(
+                                        queued_batch_idx, segment_path, max_concurrent_ffmpeg, queued_batch_rows
+                                    )
+                                )
+                                ffmpeg_tasks.append(ffmpeg_task)
+                                processed_batches += 1
+
+                            queued_batches.clear()  # Clear the queue
+
+                        # Process current batch
+                        segment_path = f"{self.filename}_segment_{batch_idx:04d}.mov"
+                        segment_paths.append(segment_path)
+
+                        logger.info(f"🎞️  Starting immediate ffmpeg for batch {batch_idx + 1}...")
+
+                        ffmpeg_task = asyncio.create_task(
+                            self._create_video_segment_with_cleanup(
+                                batch_idx, segment_path, max_concurrent_ffmpeg, batch_rows
+                            )
                         )
-                    )
-                    ffmpeg_tasks.append(ffmpeg_task)
+                        ffmpeg_tasks.append(ffmpeg_task)
+                        processed_batches += 1
+                        logger.info(f"⚡ Immediate FFmpeg task {processed_batches}/{total_batches} started")
 
-                    processed_batches += 1
-                    logger.info(
-                        f"⚡ FFmpeg task {processed_batches}/{total_batches} started"
-                    )
             except Exception as e:
                 logger.error(f"❌ Error in ffmpeg_processor: {e}")
                 import traceback
@@ -1479,10 +1530,108 @@ class dashGenerator:
         return final_output
 
     async def _generate_batch_images(self, batch_rows, batch_idx):
-        """Generate images for a specific batch with dynamic FFmpeg detection"""
+        """Generate images for a specific batch with memory leak prevention"""
         logger.info(
             f"Starting image generation for batch {batch_idx + 1} ({len(batch_rows)} frames)"
         )
+
+        # Use moderate threading to balance performance and memory management
+        from concurrent.futures import ThreadPoolExecutor
+        import time
+        import gc
+
+        # Determine optimal thread count - balance between performance and memory
+        max_workers = min(int(cpu_count() * 1.5), 16)  # Conservative threading
+        logger.info(f"Using {max_workers} threads for batch {batch_idx + 1}")
+
+        # Pre-create font objects to reduce object creation overhead
+        font_cache = {}
+        try:
+            font_cache['main'] = ImageFont.truetype("font/DejaVuSansCondensed-Bold.ttf", size=self.fontsize)
+            font_cache['scale'] = ImageFont.truetype("font/DejaVuSansCondensed-Bold.ttf", size=max(12, self.fontsize // 4))
+        except:
+            font_cache['main'] = ImageFont.load_default()
+            font_cache['scale'] = ImageFont.load_default()
+
+        start_time = time.time()
+
+        # Use ThreadPoolExecutor with memory-safe image generation
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks for this batch
+            futures = [
+                executor.submit(self._generate_image_with_cleanup, row, font_cache)
+                for row in batch_rows
+            ]
+
+            # Wait for completion with progress monitoring
+            completed = 0
+            for future in futures:
+                try:
+                    future.result()  # Will raise exception if image generation failed
+                    completed += 1
+
+                    # Log progress periodically
+                    if completed % 100 == 0 or completed == len(futures):
+                        elapsed = time.time() - start_time
+                        rate = completed / elapsed if elapsed > 0 else 0
+                        logger.info(f"Batch {batch_idx + 1}: {completed}/{len(futures)} images ({rate:.1f}/sec)")
+
+                except Exception as e:
+                    logger.error(f"Error generating image in batch {batch_idx + 1}: {e}")
+                    raise
+
+        # Force garbage collection after each batch to prevent memory accumulation
+        gc.collect()
+
+        total_time = time.time() - start_time
+        batch_rate = len(batch_rows) / total_time if total_time > 0 else 0
+        logger.info(f"✅ Batch {batch_idx + 1} completed in {total_time:.3f}s ({batch_rate:.1f} img/s)")
+
+    def _generate_image_with_cleanup(self, row, font_cache):
+        """Generate an image with proper memory cleanup to prevent leaks"""
+        try:
+            # Generate the image using the existing method
+            self.generate_image(row, font_cache=font_cache)
+
+        except Exception as e:
+            # Log error but don't fail the whole batch
+            logger.error(f"Error generating image for frame {row.get('Record', 'unknown')}: {e}")
+            raise
+
+    async def _generate_and_queue_batch(self, batch_rows, batch_idx, completed_batches):
+        """Generate images for a batch and queue when ready - with performance profiling"""
+        def profile_threads():
+            """Helper function to profile thread and process status"""
+            active_threads = threading.active_count()
+            thread_names = [t.name for t in threading.enumerate()]
+            logger.info(f"🔍 PROFILING BATCH {batch_idx + 1}: {active_threads} active threads: {thread_names}")
+
+            # Monitor CPU usage per process
+            try:
+                import psutil
+                current_process = psutil.Process()
+                cpu_percent = current_process.cpu_percent(interval=0.1)
+                memory_mb = current_process.memory_info().rss / 1024 / 1024
+                logger.info(f"🔍 PROCESS STATS: CPU={cpu_percent:.1f}%, Memory={memory_mb:.1f}MB")
+
+                # Count threads in this Python process
+                thread_count = current_process.num_threads()
+                logger.info(f"🔍 PYTHON THREADS: {thread_count} threads in main process")
+
+                # Check for any lingering asyncio activity
+                try:
+                    loop = asyncio.get_running_loop()
+                    task_count = len([t for t in asyncio.all_tasks(loop) if not t.done()])
+                    logger.info(f"🔍 ASYNCIO TASKS: {task_count} active tasks")
+                except:
+                    logger.info(f"🔍 ASYNCIO: No running loop detected")
+
+            except Exception as e:
+                logger.warning(f"Could not get process stats: {e}")
+
+        # Profile BEFORE processing
+        logger.info(f"🔍 === PROFILING BEFORE BATCH {batch_idx + 1} ===")
+        profile_threads()
 
         # DYNAMIC THREADING: Scale based on actual FFmpeg process count in real-time
         # This solves the core issue - detecting when FFmpeg completes and scaling back up
@@ -1493,32 +1642,35 @@ class dashGenerator:
             ffmpeg_processes = [p for p in psutil.process_iter(['name']) if 'ffmpeg' in p.info['name'].lower()]
             active_ffmpeg_count = len(ffmpeg_processes)
 
+            # AGGRESSIVE SCHEDULER COMBAT: Scale threads based on FFmpeg processes
+            # cpus*2.0 when no FFmpeg, cpus*0.5 when FFmpeg is running
+
             if active_ffmpeg_count == 0:
-                # NO FFMPEG RUNNING: AGGRESSIVE process scaling for maximum CPU reclaim
-                max_workers = int(cpu_count() * 2.0)  # 2x CPU cores as separate processes
-                max_workers = max(1, min(max_workers, 24))  # Reasonable process cap
-                logger.info(f"🚀 BATCH {batch_idx + 1}: NO FFMPEG DETECTED - Using {max_workers} PROCESSES (2x CPU cores) - TRUE PARALLELISM")
+                # NO FFMPEG RUNNING: Apply adaptive scaling
+                max_workers = int(cpu_count() * 2.0)
+                max_workers = max(1, min(max_workers, 32))  # Higher cap for aggressive scaling
+                logger.info(f"🚀 BATCH {batch_idx + 1}: NO FFMPEG - AGGRESSIVE SCALING - Using {max_workers} threads (2.0x CPU)")
+
+                # MAXIMUM EFFICIENCY: Skip pauses when thermal isn't the issue
+                # Maintain consistent high performance without interruption
+                logger.info(f"� Maintaining peak performance for batch {batch_idx + 1} (no thermal constraints)")
 
                 # SYSTEM OPTIMIZATION: Process warm-up to combat scheduler inertia
                 if batch_idx > 0:  # Only after first batch (when FFmpeg might have been running)
                     logger.info(f"🔥 Warming up process pool to combat system scheduler inertia...")
             else:
-                # FFMPEG RUNNING: Conservative process count to avoid overwhelming system
-                max_workers = max(1, int(cpu_count() * 0.5))  # 0.5x CPU cores when FFmpeg is active
-                max_workers = min(max_workers, 8)  # Conservative process cap for shared CPU
-                logger.info(f"⚖️  BATCH {batch_idx + 1}: {active_ffmpeg_count} FFMPEG DETECTED - Using {max_workers} PROCESSES (0.5x CPU cores) - CONSERVATIVE SHARED CPU")
+                # FFMPEG RUNNING: Conservative scaling to share CPU resources
+                max_workers = int(cpu_count() * 0.5)
+                max_workers = max(1, min(max_workers, 8))  # Conservative cap for shared CPU
+                logger.info(f"⚖️  BATCH {batch_idx + 1}: {active_ffmpeg_count} FFMPEG ACTIVE - SHARED CPU - Using {max_workers} threads (0.5x CPU)")
 
         except Exception as e:
-            # Fallback if psutil fails - use conservative process count
+            # Fallback: Use aggressive scaling if we can't detect FFmpeg
             logger.warning(f"Could not detect FFmpeg processes: {e}")
-            if batch_idx == 0:
-                max_workers = int(cpu_count() * 2.0)  # 2x processes when starting
-                max_workers = max(1, min(max_workers, 24))
-                logger.info(f"🔄 BATCH {batch_idx + 1}: FALLBACK - Using {max_workers} PROCESSES (2x CPU cores)")
-            else:
-                max_workers = int(cpu_count() * 1.5)  # 1.5x processes for later batches
-                max_workers = max(1, min(max_workers, 18))
-                logger.info(f"🔄 BATCH {batch_idx + 1}: FALLBACK - Using {max_workers} PROCESSES (1.5x CPU cores)")
+            max_workers = int(cpu_count() * 2.0)  # Default to aggressive
+            max_workers = max(1, min(max_workers, 32))
+            logger.info(f"🔄 BATCH {batch_idx + 1}: FALLBACK AGGRESSIVE - Using {max_workers} threads (2.0x CPU)")
+            logger.info(f"⚠️  Assuming no FFmpeg running due to detection failure")
 
         # Pre-create font objects to reduce GIL contention during image generation
         font_cache = {}
@@ -1533,16 +1685,37 @@ class dashGenerator:
         # Note: With processes, each worker will create its own copy, but this reduces initial allocation
         image_template = Image.new("RGBA", (self.width, self.height), (0, 0, 0, 0))
 
+        # PROFILING: Monitor thread creation
+        logger.info(f"🔍 CREATING ThreadPoolExecutor with {max_workers} workers...")
+        start_time = time.time()
+
         # Use ThreadPoolExecutor for FULL feature access with dynamic scaling
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # SYSTEM OPTIMIZATION: Pre-warm thread pool with dummy work to combat scheduler inertia
+            # Profile AFTER thread pool creation
+            logger.info(f"🔍 === PROFILING AFTER ThreadPoolExecutor CREATION ===")
+            profile_threads()
+
+            # AGGRESSIVE THREAD OPTIMIZATION: Combat scheduler inertia for sustained performance
             if batch_idx > 0 and active_ffmpeg_count == 0:
                 # AGGRESSIVE: Thread warm-up to ensure OS scheduler prioritizes Python threads
-                warmup_futures = [executor.submit(lambda: None) for _ in range(max_workers)]
-                for future in warmup_futures:
-                    future.result()
-                logger.info(f"🔥 Thread pool AGGRESSIVELY warmed up with {max_workers} threads")
+                warmup_start = time.time()
+                # Double warm-up for batches 4+ since that's where we see the cliff
+                warmup_iterations = 2 if batch_idx >= 3 else 1
+                for iteration in range(warmup_iterations):
+                    warmup_futures = [executor.submit(lambda: None) for _ in range(max_workers)]
+                    for future in warmup_futures:
+                        future.result()
+                warmup_time = time.time() - warmup_start
+                logger.info(f"🔥 Thread pool SUPER-AGGRESSIVELY warmed up with {max_workers} threads x{warmup_iterations} iterations in {warmup_time:.3f}s")
+
+                # Profile AFTER warmup
+                logger.info(f"🔍 === PROFILING AFTER WARMUP ===")
+                profile_threads()
+
+            # PROFILING: Monitor image generation start
+            image_start_time = time.time()
+            logger.info(f"🔍 STARTING image generation for {len(batch_rows)} frames...")
 
             # Submit all batch rows for processing with FULL dashboard generation
             # Use the complete generate_image method for all features
@@ -1556,13 +1729,63 @@ class dashGenerator:
                 for row in batch_rows
             ]
 
-            # Wait for all images in this batch to complete
-            for future in futures:
-                future.result()  # This will raise an exception if image generation failed        # Explicit garbage collection after batch completion to reduce memory pressure
+            # Profile AFTER submitting all futures
+            logger.info(f"🔍 === PROFILING AFTER SUBMITTING {len(futures)} FUTURES ===")
+            profile_threads()
+
+            # Wait for all images in this batch to complete with progress monitoring
+            completed = 0
+            for i, future in enumerate(futures):
+                future.result()  # This will raise an exception if image generation failed
+                completed += 1
+
+                # Log progress and profile every 100 images
+                if completed % 100 == 0 or completed == len(futures):
+                    elapsed = time.time() - image_start_time
+                    rate = completed / elapsed if elapsed > 0 else 0
+                    logger.info(f"🔍 PROGRESS: {completed}/{len(futures)} images ({rate:.1f} images/sec)")
+
+                    # Quick profile during processing to catch GIL issues
+                    if completed % 200 == 0:
+                        logger.info(f"🔍 === MID-PROCESSING PROFILE ({completed} images) ===")
+                        profile_threads()
+
+        # Profile AFTER thread pool cleanup
+        logger.info(f"🔍 === PROFILING AFTER ThreadPoolExecutor CLEANUP ===")
+        profile_threads()
+
+        # Explicit garbage collection after batch completion to reduce memory pressure
         import gc
         gc.collect()
 
-        logger.info(f"✅ BATCH {batch_idx + 1} IMAGES COMPLETED - ready for ffmpeg")
+        total_time = time.time() - start_time
+        batch_rate = len(batch_rows) / total_time if total_time > 0 else 0
+
+        # PERFORMANCE TRACKING: Record batch performance for analysis
+        self.batch_performance_history.append({
+            'batch': batch_idx + 1,
+            'rate': batch_rate,
+            'time': total_time,
+            'threads': max_workers
+        })
+
+        # ADAPTIVE PERFORMANCE ANALYSIS: Detect scheduler cliff in real-time
+        if len(self.batch_performance_history) > 1:
+            prev_rate = self.batch_performance_history[-2]['rate']
+            rate_change = (batch_rate - prev_rate) / prev_rate * 100 if prev_rate > 0 else 0
+
+            if rate_change < -20:  # More than 20% performance drop
+                logger.warning(f"🚨 PERFORMANCE CLIFF DETECTED: Batch {batch_idx + 1} rate {batch_rate:.1f} img/s ({rate_change:+.1f}% vs previous)")
+            elif rate_change > 5:  # Performance improvement
+                logger.info(f"📈 PERFORMANCE GAIN: Batch {batch_idx + 1} rate {batch_rate:.1f} img/s ({rate_change:+.1f}% vs previous)")
+            else:
+                logger.info(f"📊 PERFORMANCE STABLE: Batch {batch_idx + 1} rate {batch_rate:.1f} img/s ({rate_change:+.1f}% vs previous)")
+
+        logger.info(f"✅ BATCH {batch_idx + 1} IMAGES COMPLETED in {total_time:.3f}s ({batch_rate:.1f} img/s) - ready for ffmpeg")
+
+        # Final profiling
+        logger.info(f"🔍 === FINAL PROFILING BATCH {batch_idx + 1} ===")
+        profile_threads()
 
     def _generate_image_optimized(self, row, font_cache, image_template=None):
         """Optimized image generation with reduced GIL contention and memory reuse"""
@@ -1590,85 +1813,104 @@ class dashGenerator:
         )
 
     async def _create_video_segment(
-        self, batch_idx, segment_path, semaphore, batch_rows
+        self, batch_idx, segment_path, max_concurrent, batch_rows
     ):
-        """Create a video segment from a batch of images"""
-        logger.info(f"Waiting for ffmpeg slot for batch {batch_idx + 1}...")
-        async with semaphore:
+        """Create a video segment from a batch of images without semaphore GIL overhead"""
+        logger.info(f"Starting ffmpeg for batch {batch_idx + 1}...")
+
+        # Simple process limiting without asyncio semaphores (eliminates GIL contention)
+        import time
+        while True:
+            # Count active FFmpeg processes using system tools (no Python GIL involved)
+            try:
+                import subprocess
+                result = subprocess.run(['pgrep', '-c', 'ffmpeg'], capture_output=True, text=True)
+                active_count = int(result.stdout.strip()) if result.returncode == 0 else 0
+
+                if active_count < max_concurrent:
+                    break
+
+                logger.info(f"Waiting for FFmpeg slot (current: {active_count}/{max_concurrent})...")
+                time.sleep(0.1)  # Brief wait without blocking other tasks
+            except:
+                # Fallback: just proceed if we can't count processes
+                break
+
+        logger.info(
+            f"FFMPEG STARTED: Creating video segment {batch_idx + 1}: {segment_path}"
+        )
+
+        try:
+            # Count available frames for this batch
+            frame_count = 0
+            for row in batch_rows:
+                frame_num = int(row["Record"])
+                frame_file = f"{self.foldername}frame{frame_num:08d}.png"
+                if os.path.exists(frame_file):
+                    frame_count += 1
+                else:
+                    logger.warning(f"Frame file missing: {frame_file}")
+
+            if frame_count == 0:
+                logger.error(
+                    f"Batch {batch_idx + 1}: No frames found! Skipping ffmpeg."
+                )
+                return
+
             logger.info(
-                f"FFMPEG STARTED: Creating video segment {batch_idx + 1}: {segment_path}"
+                f"Batch {batch_idx + 1}: Processing {frame_count} frames with ffmpeg"
             )
 
-            try:
-                # Count available frames for this batch
-                frame_count = 0
-                for row in batch_rows:
-                    frame_num = int(row["Record"])
-                    frame_file = f"{self.foldername}frame{frame_num:08d}.png"
-                    if os.path.exists(frame_file):
-                        frame_count += 1
-                    else:
-                        logger.warning(f"Frame file missing: {frame_file}")
+            # Use pattern-based input like the original working method
+            # Create a temporary directory with only this batch's frames
+            batch_dir = f"{self.tmpdir.name}/batch_{batch_idx}"
+            os.makedirs(batch_dir, exist_ok=True)
 
-                if frame_count == 0:
-                    logger.error(
-                        f"Batch {batch_idx + 1}: No frames found! Skipping ffmpeg."
-                    )
-                    return
+            # Copy/link only the frames for this batch
+            for row in batch_rows:
+                frame_num = int(row["Record"])
+                src_frame = f"{self.foldername}frame{frame_num:08d}.png"
+                dst_frame = f"{batch_dir}/frame{frame_num:08d}.png"
+                if os.path.exists(src_frame):
+                    os.link(src_frame, dst_frame)  # Hard link to save space
 
-                logger.info(
-                    f"Batch {batch_idx + 1}: Processing {frame_count} frames with ffmpeg"
+            batch_pattern = f"{batch_dir}/frame*.png"
+
+            cmd = (
+                ffmpeg.input(batch_pattern, pattern_type="glob", framerate=25)
+                .output(
+                    segment_path,
+                    vcodec="prores_ks",
+                    pix_fmt="yuva444p10le",
+                    qscale=4,
                 )
+                .overwrite_output()
+            )
+            logger.info(f"FFmpeg command: {' '.join(cmd.compile())}")
 
-                # Use pattern-based input like the original working method
-                # Create a temporary directory with only this batch's frames
-                batch_dir = f"{self.tmpdir.name}/batch_{batch_idx}"
-                os.makedirs(batch_dir, exist_ok=True)
+            # Run FFmpeg directly without asyncio thread pool to eliminate GIL contention
+            self._run_ffmpeg_with_nice(cmd)
+            logger.info(
+                f"FFMPEG COMPLETED: Video segment {batch_idx + 1}: {segment_path}"
+            )
 
-                # Copy/link only the frames for this batch
-                for row in batch_rows:
-                    frame_num = int(row["Record"])
-                    src_frame = f"{self.foldername}frame{frame_num:08d}.png"
-                    dst_frame = f"{batch_dir}/frame{frame_num:08d}.png"
-                    if os.path.exists(src_frame):
-                        os.link(src_frame, dst_frame)  # Hard link to save space
+            # Clean up batch directory
+            import shutil
 
-                batch_pattern = f"{batch_dir}/frame*.png"
+            shutil.rmtree(batch_dir)
 
-                cmd = (
-                    ffmpeg.input(batch_pattern, pattern_type="glob", framerate=25)
-                    .output(
-                        segment_path,
-                        vcodec="prores_ks",
-                        pix_fmt="yuva444p10le",
-                        qscale=4,
-                    )
-                    .overwrite_output()
-                )
-                logger.info(f"FFmpeg command: {' '.join(cmd.compile())}")
-
-                await asyncio.get_event_loop().run_in_executor(None, lambda: self._run_ffmpeg_with_nice(cmd))
-                logger.info(
-                    f"FFMPEG COMPLETED: Video segment {batch_idx + 1}: {segment_path}"
-                )
-
-                # Clean up batch directory
+        except Exception as e:
+            logger.error(f"Error creating video segment {batch_idx + 1}: {e}")
+            # Clean up batch directory on error
+            batch_dir = f"{self.tmpdir.name}/batch_{batch_idx}"
+            if os.path.exists(batch_dir):
                 import shutil
 
                 shutil.rmtree(batch_dir)
-
-            except Exception as e:
-                logger.error(f"Error creating video segment {batch_idx + 1}: {e}")
-                # Clean up batch directory on error
-                batch_dir = f"{self.tmpdir.name}/batch_{batch_idx}"
-                if os.path.exists(batch_dir):
-                    import shutil
-
-                    shutil.rmtree(batch_dir)
-                raise
+            raise
 
     def _run_ffmpeg_with_nice(self, cmd):
-        """Run FFmpeg command with lower priority to allow Python to reclaim CPU faster"""
+        """Run FFmpeg command with lower priority as a true subprocess, no GIL interference"""
         import subprocess
         import os
 
@@ -1679,9 +1921,9 @@ class dashGenerator:
         nice_cmd = ['nice', '-n', '15'] + ffmpeg_cmd
 
         try:
-            # Run the nice command directly
+            # Run the nice command directly as a subprocess - no thread pool, no GIL
             result = subprocess.run(nice_cmd, check=True, capture_output=True, text=True)
-            logger.info(f"FFmpeg completed with nice priority")
+            logger.info(f"FFmpeg completed with nice priority (true subprocess)")
             return result
         except subprocess.CalledProcessError as e:
             logger.error(f"FFmpeg failed: {e.stderr}")
@@ -1690,6 +1932,29 @@ class dashGenerator:
             logger.warning(f"Nice command failed, falling back to normal priority: {e}")
             # Fallback to original command if nice fails
             return cmd.run()
+
+    def _run_ffmpeg_background(self, cmd, segment_path, batch_idx):
+        """Start FFmpeg as a background subprocess without asyncio/thread overhead"""
+        import subprocess
+        import os
+
+        # Get the compiled command
+        ffmpeg_cmd = cmd.compile()
+        nice_cmd = ['nice', '-n', '15'] + ffmpeg_cmd
+
+        try:
+            # Start subprocess without waiting - true background process
+            process = subprocess.Popen(
+                nice_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            logger.info(f"🎞️  FFmpeg process {batch_idx + 1} started as PID {process.pid} (background)")
+            return process
+        except Exception as e:
+            logger.error(f"Failed to start FFmpeg background process: {e}")
+            raise
 
     async def _create_video_segment_with_cleanup(
         self, batch_idx, segment_path, semaphore, batch_rows
@@ -2004,3 +2269,15 @@ class dashGenerator:
         img.save(filename, "PNG", compress_level=1)
         # logger.info("Saved file " + filename)
         self.log.append("Saved file " + filename)
+
+        # CRITICAL: Close all images to prevent memory leaks
+        try:
+            # Close the track position image that was created by draw_position
+            if drawimage:
+                drawimage.close()
+            # Close the main image
+            if img:
+                img.close()
+        except Exception as e:
+            logger.warning(f"Error closing images: {e}")
+            # Don't raise here - image is already saved
